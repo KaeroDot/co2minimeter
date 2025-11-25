@@ -42,23 +42,35 @@ shutdown_event = threading.Event()
 
 class CO2Sensor(threading.Thread):
     """Thread to simulate CO2 sensor readings"""
-    def run(self):
-        global measurements
+    def __init__(self, display_thread, daemon=None):
+        super().__init__(daemon=daemon)
+        self.display_thread = display_thread
+
+    def read_co2(self):
         while not shutdown_event.is_set():
-            # Simulate sensor reading (blocking)
-            time.sleep(random.uniform(*CO2_MEASUREMENT_INTERVAL))
-            
-            # Generate random CO2 value between 400-2000 ppm
+            # Simulate CO2 reading (400-2000 ppm)
             co2_value = random.randint(400, 2000)
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             
             with measurement_lock:
                 measurements.append((timestamp, co2_value))
-                # Keep only the most recent measurements
+                # Keep only the last MAX_MEASUREMENTS
                 if len(measurements) > MAX_MEASUREMENTS:
                     measurements.pop(0)
             
             print(f"CO2: {co2_value} ppm at {timestamp}")
+            
+            # Notify display thread of new measurement
+            if hasattr(self.display_thread, 'display_condition'):
+                with self.display_thread.display_condition:
+                    self.display_thread.new_measurement = True
+                    self.display_thread.display_condition.notify()
+            
+            # Random delay between 2-10 seconds
+            time.sleep(random.uniform(2, 10))
+
+    def run(self):
+        self.read_co2()
 
 class EInkDisplay(threading.Thread):
     """Thread to update the e-ink display with current time"""
@@ -68,6 +80,9 @@ class EInkDisplay(threading.Thread):
         self.font15 = None
         self.font24 = None
         self.last_display = None
+        self.last_minute = -1
+        self.display_condition = threading.Condition()
+        self.new_measurement = False
         
     def init_display(self):
         """Initialize the e-ink display or set up simulation"""
@@ -77,12 +92,27 @@ class EInkDisplay(threading.Thread):
             
         try:
             self.epd = epd2in13_V4.EPD()
-            self.epd.init()
+            self.epd.init_fast()  # Use fast init for better performance
             self.epd.Clear(0xFF)
             
             # Load fonts
             self.font15 = ImageFont.truetype(os.path.join(picdir, 'Font.ttc'), 15)
             self.font24 = ImageFont.truetype(os.path.join(picdir, 'Font.ttc'), 24)
+            
+            # Create base image for partial updates
+            self.base_image = Image.new('1', (self.epd.height, self.epd.width), 255)
+            self.draw = ImageDraw.Draw(self.base_image)
+            
+            # Draw static elements on base image
+            self.draw.rectangle([(0, 0), (self.epd.height, self.epd.width)], fill=255)
+            
+            # Display base image
+            self.epd.displayPartBaseImage(self.epd.getbuffer(self.base_image))
+            
+            # Create partial update image
+            self.partial_image = Image.new('1', (self.epd.height, self.epd.width), 255)
+            self.partial_draw = ImageDraw.Draw(self.partial_image)
+            
             return True
         except Exception as e:
             print(f"Failed to initialize e-ink display: {e}")
@@ -103,30 +133,52 @@ class EInkDisplay(threading.Thread):
                 
                 display_text = f""" Time: {current_time}, Date: {current_date}, CO2:  {latest_reading} """
                 
-                # Only print if the display has changed
+                # Only update if the display has changed
                 if display_text != self.last_display:
                     if HAS_EINK_DISPLAY and self.epd:
-                        # Update real display
-                        image = Image.new('1', (self.epd.height, self.epd.width), 255)
-                        draw = ImageDraw.Draw(image)
-                        draw.text((10, 10), current_time, font=self.font24, fill=0)
-                        draw.text((10, 40), current_date, font=self.font15, fill=0)
-                        draw.text((10, 70), f"CO2: {latest_reading}", font=self.font24, fill=0)
-                        self.epd.display(self.epd.getbuffer(image))
+                        # Clear only the areas we're about to update
+                        self.partial_draw.rectangle([(0, 0), (self.epd.height, 100)], fill=255)
+                        
+                        # Draw new content
+                        self.partial_draw.text((10, 10), current_time, font=self.font24, fill=0)
+                        self.partial_draw.text((10, 40), current_date, font=self.font15, fill=0)
+                        self.partial_draw.text((10, 70), f"CO2: {latest_reading}", font=self.font24, fill=0)
+                        
+                        # Update only the changed part of the display
+                        self.epd.displayPartial(self.epd.getbuffer(self.partial_image))
                     else:
                         # Print to console in simulation mode
                         print(display_text)
                     
                     self.last_display = display_text
                 
-                time.sleep(1)
+                # Wait until next minute or new measurement
+                current_minute = datetime.now().minute
+                if current_minute != self.last_minute or self.new_measurement:
+                    if self.new_measurement:
+                        self.new_measurement = False
+                    self.last_minute = current_minute
+                    
+                    # Calculate sleep time until next minute
+                    now = datetime.now()
+                    seconds_until_next_minute = 60 - now.second - now.microsecond / 1_000_000.0
+                    with self.display_condition:
+                        self.display_condition.wait(timeout=seconds_until_next_minute)
+                else:
+                    # Just wait for notification of new measurement
+                    with self.display_condition:
+                        self.display_condition.wait()
                 
         except Exception as e:
             print(f"Error in display thread: {e}")
         finally:
             if HAS_EINK_DISPLAY and self.epd:
-                self.epd.sleep()
-                print("Display: E-ink display put to sleep")
+                try:
+                    # Don't clear the display, just put it to sleep to preserve the last shown values
+                    self.epd.sleep()
+                    print("Display: E-ink display put to sleep (last values preserved)")
+                except Exception as e:
+                    print(f"Error while putting display to sleep: {e}")
 
 class WebServer(threading.Thread):
     """Thread to serve a simple web interface"""
@@ -177,9 +229,9 @@ class WebServer(threading.Thread):
 def main():
     print("Starting CO2 Monitor...")
     
-    # Create and start threads
-    co2_thread = CO2Sensor(daemon=True)
+    # Create the display thread first so it can be referenced by CO2 sensor
     display_thread = EInkDisplay(daemon=True)
+    co2_thread = CO2Sensor(display_thread, daemon=True)
     web_thread = WebServer(WEB_SERVER_PORT)
     
     try:
@@ -194,7 +246,7 @@ def main():
             time.sleep(1)
             
     except KeyboardInterrupt:
-        print("\nShutting down...")
+        print("\nShutting down. Waiting for CO2 measurement to finish can take long time ...")
         shutdown_event.set()
         
         # Stop web server
