@@ -8,6 +8,10 @@ import random
 import threading
 import json
 import csv
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime, timedelta
 from queue import Queue
@@ -152,6 +156,101 @@ def cleanup_old_measurements():
             ]
     except Exception as e:
         print(f"Error cleaning up old measurements: {e}")
+
+
+def generate_plot():
+    """Generate SVG and bitmap plot of last 12 hours of CO2 measurements"""
+    try:
+        with measurement_lock:
+            data = measurements.copy()
+        
+        if not data:
+            print("No data to plot")
+            return
+        
+        # Parse timestamps and values
+        timestamps = [datetime.strptime(ts, "%Y-%m-%d %H:%M:%S") for ts, _ in data]
+        values = [val for _, val in data]
+        
+        # Insert NaN values where gaps are larger than 5 minutes
+        timestamps_gapped = []
+        values_gapped = []
+        max_gap = timedelta(minutes=5)
+        
+        for i in range(len(timestamps)):
+            timestamps_gapped.append(timestamps[i])
+            values_gapped.append(values[i])
+            
+            # Check if there's a gap to the next point
+            if i < len(timestamps) - 1:
+                time_diff = timestamps[i + 1] - timestamps[i]
+                if time_diff > max_gap:
+                    # Insert NaN to create a gap in the plot
+                    timestamps_gapped.append(timestamps[i] + time_diff / 2)
+                    values_gapped.append(float('nan'))
+        
+        # Set x-axis time range
+        now = datetime.now()
+        start_time = now - timedelta(hours=HOURS_TO_KEEP)
+        
+        # Generate SVG with grid and time labels
+        fig_svg, ax_svg = plt.subplots(figsize=(10, 3), dpi=100)
+        ax_svg.plot(timestamps_gapped, values_gapped, color='#2E7D32', linewidth=2)
+        ax_svg.set_ylim(400, 2000)
+        ax_svg.set_yticks([500, 1000, 1500])
+        ax_svg.set_xlim(start_time, now)
+        ax_svg.xaxis.set_major_locator(mdates.HourLocator(interval=1))
+        ax_svg.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+        ax_svg.tick_params(axis='x', labelsize=8, rotation=45)
+        ax_svg.tick_params(axis='y', labelsize=10)
+        ax_svg.grid(True, alpha=0.3, linewidth=0.5)
+        ax_svg.set_ylabel('CO2 (x10⁻⁶)', fontsize=10)
+        plt.tight_layout()
+        
+        svg_path = os.path.join(DATA_DIR, "data_latest_plot.svg")
+        plt.savefig(svg_path, format='svg', dpi=100)
+        print(f"Plot saved as SVG: {svg_path}")
+        plt.close(fig_svg)
+        
+        # Generate PNG without grid (245x70 pixels for e-ink display)
+        fig_png, ax_png = plt.subplots(figsize=(2.45, 0.7), dpi=100)
+        ax_png.plot(timestamps_gapped, values_gapped, color='#2E7D32', linewidth=1)
+        ax_png.set_ylim(400, 2000)
+        ax_png.set_yticks([500, 1000, 1500])
+        ax_png.tick_params(axis='y', labelsize=6)
+        ax_png.set_xlim(start_time, now)
+        ax_png.xaxis.set_major_locator(mdates.HourLocator(interval=1))
+        ax_png.xaxis.set_major_formatter(mdates.DateFormatter(''))
+        ax_png.tick_params(axis='x', length=3, width=0.5)
+        ax_png.set_xlabel('')
+        ax_png.set_ylabel('')
+        plt.subplots_adjust(left=0.12, right=0.98, top=0.98, bottom=0.08)
+        
+        png_path = os.path.join(DATA_DIR, "data_latest_plot.png")
+        plt.savefig(png_path, format='png', dpi=100)
+        print(f"Plot saved as PNG: {png_path}")
+        plt.close(fig_png)
+        
+    except Exception as e:
+        print(f"Error generating plot: {e}")
+
+
+class PlotGenerator(threading.Thread):
+    """Thread to generate plots every 15 minutes"""
+    
+    def __init__(self, daemon=None):
+        super().__init__(daemon=daemon)
+    
+    def run(self):
+        # Generate initial plot
+        time.sleep(5)  # Wait a bit for initial measurements
+        generate_plot()
+        
+        while not shutdown_event.is_set():
+            # Wait 15 minutes (900 seconds)
+            if shutdown_event.wait(timeout=900):
+                break
+            generate_plot()
 
 
 class CO2Sensor(threading.Thread):
@@ -356,6 +455,21 @@ class WebServer(threading.Thread):
     def run(self):
         class RequestHandler(BaseHTTPRequestHandler):
             def do_GET(_self):
+                # Serve SVG plot file
+                if _self.path == '/plot.svg':
+                    svg_path = os.path.join(DATA_DIR, "data_latest_plot.svg")
+                    if os.path.exists(svg_path):
+                        _self.send_response(200)
+                        _self.send_header("Content-type", "image/svg+xml")
+                        _self.end_headers()
+                        with open(svg_path, 'rb') as f:
+                            _self.wfile.write(f.read())
+                    else:
+                        _self.send_response(404)
+                        _self.end_headers()
+                    return
+                
+                # Serve HTML page
                 _self.send_response(200)
                 _self.send_header("Content-type", "text/html")
                 _self.end_headers()
@@ -409,11 +523,13 @@ def main():
     display_thread = EInkDisplay(daemon=True)
     co2_thread = CO2Sensor(display_thread, daemon=True)
     web_thread = WebServer(WEB_SERVER_PORT)
+    plot_thread = PlotGenerator(daemon=True)
 
     try:
         co2_thread.start()
         display_thread.start()
         web_thread.start()
+        plot_thread.start()
 
         print("CO2 Monitor is running. Press Ctrl+C to exit.")
 
