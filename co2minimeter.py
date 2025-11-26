@@ -7,8 +7,9 @@ import time
 import random
 import threading
 import json
+import csv
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from datetime import datetime
+from datetime import datetime, timedelta
 from queue import Queue
 from PIL import Image, ImageDraw, ImageFont
 
@@ -48,12 +49,109 @@ else:
 # Configuration
 CO2_MEASUREMENT_INTERVAL = (2, 10)  # Random interval between 2-10 seconds
 WEB_SERVER_PORT = 8080
-MAX_MEASUREMENTS = 100
+HOURS_TO_KEEP = 12  # Keep last 12 hours of measurements
+DATA_DIR = os.path.join(os.path.dirname(os.path.realpath(__file__)), "data")
 
 # Global variables
 measurements = []
 measurement_lock = threading.Lock()
 shutdown_event = threading.Event()
+
+
+def save_to_csv(timestamp_str, co2_value):
+    """Save measurement to daily CSV file"""
+    try:
+        # Create data directory if it doesn't exist
+        os.makedirs(DATA_DIR, exist_ok=True)
+        
+        # Parse timestamp to get date
+        dt = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
+        date_str = dt.strftime("%Y-%m-%d")
+        
+        # Create filename: data_YYYY-MM-DD.csv
+        filename = f"data_{date_str}.csv"
+        filepath = os.path.join(DATA_DIR, filename)
+        
+        # Check if file exists to determine if we need to write header
+        file_exists = os.path.isfile(filepath)
+        
+        # Write to CSV file
+        with open(filepath, 'a', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            if not file_exists:
+                writer.writerow(['YYYY-MM-DD', 'CO2, relative (x10^6)'])
+            writer.writerow([timestamp_str, co2_value])
+            
+    except Exception as e:
+        print(f"Error saving to CSV: {e}")
+
+
+def load_recent_measurements():
+    """Load measurements from the last 12 hours from CSV files"""
+    loaded_measurements = []
+    
+    try:
+        if not os.path.exists(DATA_DIR):
+            print("No previous data found.")
+            return loaded_measurements
+        
+        # Calculate cutoff time (12 hours ago)
+        cutoff_time = datetime.now() - timedelta(hours=HOURS_TO_KEEP)
+        
+        # Get list of CSV files to check (today and yesterday)
+        files_to_check = []
+        for days_back in range(2):  # Check today and yesterday
+            date = datetime.now() - timedelta(days=days_back)
+            filename = f"data_{date.strftime('%Y-%m-%d')}.csv"
+            filepath = os.path.join(DATA_DIR, filename)
+            if os.path.isfile(filepath):
+                files_to_check.append(filepath)
+        
+        # Read measurements from files
+        for filepath in files_to_check:
+            try:
+                with open(filepath, 'r') as csvfile:
+                    reader = csv.reader(csvfile)
+                    next(reader, None)  # Skip header
+                    for row in reader:
+                        if len(row) >= 2:
+                            timestamp_str = row[0]
+                            co2_value = int(row[1])
+                            
+                            # Parse timestamp and check if it's within last 12 hours
+                            measurement_time = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
+                            if measurement_time >= cutoff_time:
+                                loaded_measurements.append((timestamp_str, co2_value))
+            except Exception as e:
+                print(f"Error reading {filepath}: {e}")
+        
+        # Sort by timestamp
+        loaded_measurements.sort(key=lambda x: x[0])
+        
+        print(f"Loaded {len(loaded_measurements)} measurements from the last {HOURS_TO_KEEP} hours.")
+        
+    except Exception as e:
+        print(f"Error loading recent measurements: {e}")
+    
+    return loaded_measurements
+
+
+def cleanup_old_measurements():
+    """Remove measurements older than HOURS_TO_KEEP hours from the measurements array"""
+    global measurements
+    
+    try:
+        cutoff_time = datetime.now() - timedelta(hours=HOURS_TO_KEEP)
+        
+        with measurement_lock:
+            # Filter out measurements older than cutoff time
+            measurements = [
+                (timestamp_str, value)
+                for timestamp_str, value in measurements
+                if datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S") >= cutoff_time
+            ]
+    except Exception as e:
+        print(f"Error cleaning up old measurements: {e}")
 
 
 class CO2Sensor(threading.Thread):
@@ -71,10 +169,13 @@ class CO2Sensor(threading.Thread):
 
             with measurement_lock:
                 measurements.append((timestamp, co2_value))
-                # Keep only the last MAX_MEASUREMENTS
-                if len(measurements) > MAX_MEASUREMENTS:
-                    measurements.pop(0)
+            
+            # Clean up old measurements (older than HOURS_TO_KEEP)
+            cleanup_old_measurements()
 
+            # Save to CSV file
+            save_to_csv(timestamp, co2_value)
+            
             print(f"CO2: {co2_value}x10^-6 at {timestamp}")
 
             # Notify display thread of new measurement
@@ -299,6 +400,10 @@ class WebServer(threading.Thread):
 
 def main():
     print("Starting CO2 Monitor...")
+    
+    # Load recent measurements from CSV files
+    global measurements
+    measurements = load_recent_measurements()
 
     # Create the display thread first so it can be referenced by CO2 sensor
     display_thread = EInkDisplay(daemon=True)
