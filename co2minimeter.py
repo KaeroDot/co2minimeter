@@ -75,7 +75,7 @@ class CO2Sensor(threading.Thread):
                 if len(measurements) > MAX_MEASUREMENTS:
                     measurements.pop(0)
 
-            print(f"CO2: {co2_value} ppm at {timestamp}")
+            print(f"CO2: {co2_value}x10^-6 at {timestamp}")
 
             # Notify display thread of new measurement
             if hasattr(self.display_thread, "display_condition"):
@@ -96,8 +96,10 @@ class EInkDisplay(threading.Thread):
     def __init__(self, daemon=None):
         super().__init__(daemon=daemon)
         self.epd = None
+        self.font12 = None  # For superscript
         self.font15 = None
         self.font24 = None
+        self.font36 = None
         self.last_display = None
         self.last_minute = -1
         self.display_condition = threading.Condition()
@@ -115,22 +117,38 @@ class EInkDisplay(threading.Thread):
             self.epd.Clear(0xFF)
 
             # Load fonts
-            self.font15 = ImageFont.truetype(os.path.join(picdir, "Font.ttc"), 15)
-            self.font24 = ImageFont.truetype(os.path.join(picdir, "Font.ttc"), 24)
+            # self.font12 = ImageFont.truetype(os.path.join(picdir, "Font.ttc"), 12)
+            # self.font15 = ImageFont.truetype(os.path.join(picdir, "Font.ttc"), 15)
+            # self.font24 = ImageFont.truetype(os.path.join(picdir, "Font.ttc"), 24)
+            # self.font36 = ImageFont.truetype(os.path.join(picdir, "Font.ttc"), 36)
+            self.font12 = ImageFont.truetype("DejaVuSansMono-Bold.ttf", 12)
+            self.font15 = ImageFont.truetype("DejaVuSansMono-Bold.ttf", 15)
+            self.font24 = ImageFont.truetype("DejaVuSansMono-Bold.ttf", 24)
+            self.font36 = ImageFont.truetype("DejaVuSansMono-Bold.ttf", 36)
 
             # Create base image for partial updates
             self.base_image = Image.new("1", (self.epd.height, self.epd.width), 255)
             self.draw = ImageDraw.Draw(self.base_image)
 
-            # Draw static elements on base image
-            self.draw.rectangle([(0, 0), (self.epd.height, self.epd.width)], fill=255)
-
             # Display base image
             self.epd.displayPartBaseImage(self.epd.getbuffer(self.base_image))
 
-            # Create partial update image
-            self.partial_image = Image.new("1", (self.epd.height, self.epd.width), 255)
-            self.partial_draw = ImageDraw.Draw(self.partial_image)
+            # Draw static elements on base image
+            self.draw.rectangle([(0, 0), (self.epd.height, self.epd.width)], fill=255)
+
+            self.draw.rectangle([(0, 0), (10, 10)], fill=0)
+            
+            # Draw static "10" text and superscript "-6" for units
+            self.draw.text((110, 82), "x10", font=self.font15, fill=0)
+            # Draw "-6" as superscript (smaller font, raised position)
+            self.draw.text((134, 74), "-6", font=self.font12, fill=0)
+            # Draw static "CO2" text
+            self.draw.text((110, 100), "CO", font=self.font15, fill=0)
+            self.draw.text((130, 105), "2", font=self.font12, fill=0)
+
+            # # Create partial update image
+            # self.partial_image = Image.new("1", (self.epd.height, self.epd.width), 255)
+            # self.partial_draw = ImageDraw.Draw(self.partial_image)
 
             return True
         except Exception as e:
@@ -144,7 +162,7 @@ class EInkDisplay(threading.Thread):
         try:
             while not shutdown_event.is_set():
                 current_time = datetime.now().strftime("%H:%M")
-                current_date = datetime.now().strftime("%d. %m. %Y")
+                current_date = datetime.now().strftime("%d.%m.%Y")
 
                 # Get latest CO2 reading
                 with measurement_lock:
@@ -157,24 +175,38 @@ class EInkDisplay(threading.Thread):
                 # Only update if the display has changed
                 if display_text != self.last_display:
                     if HAS_EINK_DISPLAY and self.epd:
-                        # Clear only the areas we're about to update
-                        self.partial_draw.rectangle(
-                            [(0, 80), (self.epd.height, self.epd.width)], fill=255
+                        # Clear only the dynamic areas we're about to update
+                        # Clear CO2 value area (right-aligned region)
+                        self.draw.rectangle(
+                            [(0, 70), (110, self.epd.height)], fill=255
+                        )
+                        # Clear time and date area
+                        self.draw.rectangle(
+                            [(150, 70), (self.epd.height, self.epd.width)], fill=255
                         )
 
-                        # Draw new content
-                        self.partial_draw.text(
-                            (1, 90), f"{latest_reading}x10^-6", font=self.font24, fill=0
+                        # Draw CO2 value right-aligned (flush right before the static "10^-6")
+                        # Calculate text width to right-align
+                        co2_text = str(latest_reading)
+                        bbox = self.draw.textbbox((0, 0), co2_text, font=self.font36)
+                        text_width = bbox[2] - bbox[0]
+                        # Position it so it ends just before the static "10" at x=1
+                        # Since we want it flush right, we'll position at a fixed right edge
+                        x_position = 100 - text_width  # Align to right edge of CO2 area
+                        self.draw.text(
+                            (x_position, 80), co2_text, font=self.font36, fill=0
                         )
-                        self.partial_draw.text(
+                        
+                        # Draw time and date
+                        self.draw.text(
                             (160, 80), current_time, font=self.font15, fill=0
                         )
-                        self.partial_draw.text(
+                        self.draw.text(
                             (160, 100), current_date, font=self.font15, fill=0
                         )
 
                         # Update only the changed part of the display
-                        self.epd.displayPartial(self.epd.getbuffer(self.partial_image))
+                        self.epd.displayPartial(self.epd.getbuffer(self.base_image))
                     else:
                         # Print to console in simulation mode
                         print(display_text)
