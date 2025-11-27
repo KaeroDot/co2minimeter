@@ -55,6 +55,7 @@ CO2_MEASUREMENT_INTERVAL = (2, 10)  # Random interval between 2-10 seconds
 WEB_SERVER_PORT = 8080
 HOURS_TO_KEEP = 12  # Keep last 12 hours of measurements
 DATA_DIR = os.path.join(os.path.dirname(os.path.realpath(__file__)), "data")
+FONT_DIR = os.path.join(os.path.dirname(os.path.realpath(__file__)), "fonts")
 
 # Global variables
 measurements = []
@@ -321,10 +322,11 @@ class EInkDisplay(threading.Thread):
             # self.font15 = ImageFont.truetype(os.path.join(picdir, "Font.ttc"), 15)
             # self.font24 = ImageFont.truetype(os.path.join(picdir, "Font.ttc"), 24)
             # self.font36 = ImageFont.truetype(os.path.join(picdir, "Font.ttc"), 36)
-            self.font12 = ImageFont.truetype("DejaVuSansMono-Bold.ttf", 12)
-            self.font15 = ImageFont.truetype("DejaVuSansMono-Bold.ttf", 15)
-            self.font24 = ImageFont.truetype("DejaVuSansMono-Bold.ttf", 24)
-            self.font36 = ImageFont.truetype("DejaVuSansMono-Bold.ttf", 36)
+            font_path = os.path.join(FONT_DIR, "DejaVuSansMono-Bold.ttf")
+            self.font12 = ImageFont.truetype(font_path, 12)
+            self.font15 = ImageFont.truetype(font_path, 15)
+            self.font24 = ImageFont.truetype(font_path, 24)
+            self.font36 = ImageFont.truetype(font_path, 36)
 
             # Create base image for partial updates
             self.base_image = Image.new("1", (self.epd.height, self.epd.width), 255)
