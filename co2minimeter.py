@@ -17,6 +17,18 @@ from datetime import datetime, timedelta
 from queue import Queue
 from PIL import Image, ImageDraw, ImageFont
 
+# Try to import SCD30 sensor library
+HAS_SCD30_SENSOR = False
+try:
+    from sensirion_i2c_driver import LinuxI2cTransceiver, I2cConnection, CrcCalculator
+    from sensirion_driver_adapters.i2c_adapter.i2c_channel import I2cChannel
+    from sensirion_i2c_scd30.device import Scd30Device
+    HAS_SCD30_SENSOR = True
+    print("SCD30 sensor library loaded successfully")
+except Exception as e:
+    print(f"Warning: Could not load SCD30 sensor library: {e}")
+    print("Will use simulated CO2 readings")
+
 # Import e-Paper display library with error handling
 picdir = os.path.join(
     os.path.dirname(os.path.realpath(__file__)),
@@ -51,7 +63,7 @@ else:
     )
 
 # Configuration
-CO2_MEASUREMENT_INTERVAL = (2, 10)  # Random interval between 2-10 seconds
+CO2_MEASUREMENT_INTERVAL = 5  # Measurement interval in seconds
 WEB_SERVER_PORT = 8080
 HOURS_TO_KEEP = 12  # Keep last 12 hours of measurements
 DATA_DIR = os.path.join(os.path.dirname(os.path.realpath(__file__)), "data")
@@ -255,37 +267,104 @@ class PlotGenerator(threading.Thread):
 
 
 class CO2Sensor(threading.Thread):
-    """Thread to simulate CO2 sensor readings"""
+    """Thread to read CO2 sensor (real hardware or simulated)"""
 
     def __init__(self, display_thread, daemon=None):
         super().__init__(daemon=daemon)
         self.display_thread = display_thread
+        self.sensor = None
+        self.use_hardware = False
+        
+    def init_sensor(self):
+        """Initialize SCD30 sensor hardware"""
+        if not HAS_SCD30_SENSOR:
+            return False
+            
+        try:
+            i2c_transceiver = LinuxI2cTransceiver('/dev/i2c-1')
+            channel = I2cChannel(
+                I2cConnection(i2c_transceiver),
+                slave_address=0x61,
+                crc=CrcCalculator(8, 0x31, 0xff, 0x0)
+            )
+            self.sensor = Scd30Device(channel)
+            
+            # Initialize sensor
+            try:
+                self.sensor.stop_periodic_measurement()
+                self.sensor.soft_reset()
+                time.sleep(2.0)
+            except:
+                pass
+                
+            # Read firmware version to verify connection
+            major, minor = self.sensor.read_firmware_version()
+            print(f"SCD30 sensor connected - Firmware: {major}.{minor}")
+            
+            # Check and set measurement interval if needed
+            current_interval = self.sensor.get_measurement_interval()
+            print(f"Current measurement interval: {current_interval}s")
+            if current_interval != CO2_MEASUREMENT_INTERVAL:
+                print(f"Setting measurement interval to {CO2_MEASUREMENT_INTERVAL}s")
+                self.sensor.set_measurement_interval(CO2_MEASUREMENT_INTERVAL)
+                time.sleep(0.1)  # Small delay after setting
+            
+            # Start periodic measurements
+            self.sensor.start_periodic_measurement(0)
+            self.use_hardware = True
+            return True
+            
+        except Exception as e:
+            print(f"Failed to initialize SCD30 sensor: {e}")
+            print("Falling back to simulated CO2 readings")
+            return False
 
     def read_co2(self):
+        # Try to initialize hardware sensor
+        self.init_sensor()
+        
         while not shutdown_event.is_set():
-            # Simulate CO2 reading (400-2000 ppm)
-            co2_value = random.randint(400, 2000)
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            try:
+                if self.use_hardware:
+                    # Read from real sensor - wait for sensor's measurement interval
+                    time.sleep(CO2_MEASUREMENT_INTERVAL)
+                    co2_concentration, temperature, humidity = self.sensor.blocking_read_measurement_data()
+                    co2_value = int(co2_concentration)
+                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                else:
+                    # Simulate CO2 reading with randomized interval (50% to 150% of base interval)
+                    co2_value = random.randint(400, 2000)
+                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    # Random delay: 50% to 150% of CO2_MEASUREMENT_INTERVAL
+                    random_interval = random.uniform(
+                        CO2_MEASUREMENT_INTERVAL * 0.5,
+                        CO2_MEASUREMENT_INTERVAL * 1.5
+                    )
+                    time.sleep(random_interval)
+                
+                with measurement_lock:
+                    measurements.append((timestamp, co2_value))
+                
+                # Clean up old measurements (older than HOURS_TO_KEEP)
+                cleanup_old_measurements()
 
-            with measurement_lock:
-                measurements.append((timestamp, co2_value))
-            
-            # Clean up old measurements (older than HOURS_TO_KEEP)
-            cleanup_old_measurements()
+                # Save to CSV file
+                save_to_csv(timestamp, co2_value)
+                
+                print(f"CO2: {co2_value}x10^-6 at {timestamp}")
 
-            # Save to CSV file
-            save_to_csv(timestamp, co2_value)
-            
-            print(f"CO2: {co2_value}x10^-6 at {timestamp}")
-
-            # Notify display thread of new measurement
-            if hasattr(self.display_thread, "display_condition"):
-                with self.display_thread.display_condition:
-                    self.display_thread.new_measurement = True
-                    self.display_thread.display_condition.notify()
-
-            # Random delay between 2-10 seconds
-            time.sleep(random.uniform(2, 10))
+                # Notify display thread of new measurement
+                if hasattr(self.display_thread, "display_condition"):
+                    with self.display_thread.display_condition:
+                        self.display_thread.new_measurement = True
+                        self.display_thread.display_condition.notify()
+                        
+            except Exception as e:
+                print(f"Error reading CO2: {e}")
+                if self.use_hardware:
+                    print("Sensor error - switching to simulation mode")
+                    self.use_hardware = False
+                time.sleep(5)  # Wait before retry
 
     def run(self):
         self.read_co2()
