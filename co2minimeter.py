@@ -251,19 +251,32 @@ def generate_plot():
 class PlotGenerator(threading.Thread):
     """Thread to generate plots every 15 minutes"""
     
-    def __init__(self, daemon=None):
+    def __init__(self, display_thread, daemon=None):
         super().__init__(daemon=daemon)
+        self.display_thread = display_thread
     
     def run(self):
         # Generate initial plot
         time.sleep(5)  # Wait a bit for initial measurements
         generate_plot()
         
+        # Notify display thread of new plot
+        if hasattr(self.display_thread, "display_condition"):
+            with self.display_thread.display_condition:
+                self.display_thread.new_plot = True
+                self.display_thread.display_condition.notify()
+        
         while not shutdown_event.is_set():
             # Wait 15 minutes (900 seconds)
             if shutdown_event.wait(timeout=900):
                 break
             generate_plot()
+            
+            # Notify display thread of new plot
+            if hasattr(self.display_thread, "display_condition"):
+                with self.display_thread.display_condition:
+                    self.display_thread.new_plot = True
+                    self.display_thread.display_condition.notify()
 
 
 class CO2Sensor(threading.Thread):
@@ -382,8 +395,10 @@ class EInkDisplay(threading.Thread):
         self.font36 = None
         self.last_display = None
         self.last_minute = -1
+        self.last_plot_update = None
         self.display_condition = threading.Condition()
         self.new_measurement = False
+        self.new_plot = False
 
     def init_display(self):
         """Initialize the e-ink display or set up simulation"""
@@ -417,8 +432,6 @@ class EInkDisplay(threading.Thread):
             # Draw static elements on base image
             self.draw.rectangle([(0, 0), (self.epd.height, self.epd.width)], fill=255)
 
-            self.draw.rectangle([(0, 0), (10, 10)], fill=0)
-            
             # Draw static "10" text and superscript "-6" for units
             self.draw.text((110, 82), "x10", font=self.font15, fill=0)
             # Draw "-6" as superscript (smaller font, raised position)
@@ -456,6 +469,20 @@ class EInkDisplay(threading.Thread):
                 # Only update if the display has changed
                 if display_text != self.last_display:
                     if HAS_EINK_DISPLAY and self.epd:
+                        # Check if we need to update the plot based on notification
+                        if self.new_plot:
+                            png_path = os.path.join(DATA_DIR, "data_latest_plot.png")
+                            if os.path.exists(png_path):
+                                try:
+                                    # Load the plot image
+                                    plot_img = Image.open(png_path).convert('1')
+                                    # Paste plot at the top of the base image (position 0, 0)
+                                    self.base_image.paste(plot_img, (0, 0))
+                                    self.new_plot = False
+                                    print("Updated plot on e-ink display")
+                                except Exception as e:
+                                    print(f"Error loading plot image: {e}")
+                        
                         # Clear only the dynamic areas we're about to update
                         # Clear CO2 value area (right-aligned region)
                         self.draw.rectangle(
@@ -604,7 +631,7 @@ def main():
     display_thread = EInkDisplay(daemon=True)
     co2_thread = CO2Sensor(display_thread, daemon=True)
     web_thread = WebServer(WEB_SERVER_PORT)
-    plot_thread = PlotGenerator(daemon=True)
+    plot_thread = PlotGenerator(display_thread, daemon=True)
 
     try:
         co2_thread.start()
