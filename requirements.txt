@@ -1,2 +1,6 @@
-matplotlib
-pillow
+# System packages (install via apt):
+# - python3-matplotlib
+# - python3-pil
+#
+# Python packages (install via pip in venv):
+sensirion-i2c-scd30

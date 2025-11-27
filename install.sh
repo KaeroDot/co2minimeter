@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # CO2 Minimeter Installation Script
-# This script creates a virtual environment and installs all required dependencies
+# This script installs system packages and creates a virtual environment with access to them
 
 set -e  # Exit on error
 
@@ -20,16 +20,21 @@ PYTHON_VERSION=$(python3 --version)
 echo "Found: $PYTHON_VERSION"
 echo ""
 
-# Check if venv module is available
-if ! python3 -c "import venv" &> /dev/null; then
-    echo "Error: Python venv module is not available."
-    echo "Please install it using: sudo apt-get install python3-venv"
-    exit 1
-fi
+# Install system packages
+echo "Installing system packages (requires sudo)..."
+echo "This will install: python3-venv, python3-matplotlib, python3-pil"
+sudo apt-get update
+sudo apt-get install -y python3-venv python3-matplotlib python3-pil
 
-# Create virtual environment
+echo ""
+echo "Verifying system packages..."
+python3 -c "import matplotlib; print(f'matplotlib {matplotlib.__version__} installed')"
+python3 -c "import PIL; print(f'Pillow {PIL.__version__} installed')"
+
+# Create virtual environment with system site packages
 VENV_DIR="venv"
 if [ -d "$VENV_DIR" ]; then
+    echo ""
     echo "Virtual environment already exists at '$VENV_DIR'."
     read -p "Do you want to remove it and create a new one? (y/N): " response
     if [[ "$response" =~ ^[Yy]$ ]]; then
@@ -41,8 +46,9 @@ if [ -d "$VENV_DIR" ]; then
 fi
 
 if [ ! -d "$VENV_DIR" ]; then
-    echo "Creating virtual environment in '$VENV_DIR'..."
-    python3 -m venv "$VENV_DIR"
+    echo ""
+    echo "Creating virtual environment with system site packages access..."
+    python3 -m venv --system-site-packages "$VENV_DIR"
     echo "Virtual environment created successfully."
 fi
 
@@ -55,8 +61,12 @@ echo "Upgrading pip..."
 pip install --upgrade pip
 
 echo ""
-echo "Installing dependencies..."
-pip install matplotlib pillow
+echo "Installing Sensirion SCD30 sensor driver..."
+if [ -d "python-i2c-scd30" ]; then
+    pip install -e python-i2c-scd30/
+else
+    echo "Warning: python-i2c-scd30 directory not found. Skipping sensor driver installation."
+fi
 
 echo ""
 echo "=================================="
