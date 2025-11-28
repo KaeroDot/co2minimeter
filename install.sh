@@ -22,9 +22,59 @@ echo ""
 
 # Install system packages
 echo "Installing system packages (requires sudo)..."
-echo "This will install: python3-venv, python3-matplotlib, python3-pil"
+echo "This will install: python3-venv, python3-matplotlib, python3-pil, avahi-daemon, avahi-utils"
 sudo apt-get update
-sudo apt-get install -y python3-venv python3-matplotlib python3-pil
+sudo apt-get install -y python3-venv python3-matplotlib python3-pil avahi-daemon avahi-utils
+
+echo ""
+echo "Configuring Avahi mDNS..."
+AVAHI_CONF="/etc/avahi/avahi-daemon.conf"
+
+# Backup original config if not already backed up
+if [ ! -f "${AVAHI_CONF}.backup" ]; then
+    sudo cp "$AVAHI_CONF" "${AVAHI_CONF}.backup"
+    echo "Backed up original Avahi config to ${AVAHI_CONF}.backup"
+fi
+
+# Update Avahi configuration
+sudo tee "$AVAHI_CONF" > /dev/null << 'EOF'
+[server]
+use-ipv4=yes
+use-ipv6=yes
+allow-interfaces=wlan0,eth0
+deny-interfaces=lo
+enable-dbus=yes
+ratelimit-interval-usec=1000000
+ratelimit-burst=1000
+
+[publish]
+publish-addresses=yes
+publish-hinfo=yes
+publish-workstation=yes
+publish-domain=yes
+
+[wide-area]
+enable-wide-area=yes
+
+[rlimits]
+EOF
+
+echo "Avahi configuration updated."
+
+# Enable and start Avahi daemon
+echo "Enabling and starting Avahi daemon..."
+sudo systemctl enable avahi-daemon
+sudo systemctl restart avahi-daemon
+
+# Check Avahi status
+if sudo systemctl is-active --quiet avahi-daemon; then
+    echo "✓ Avahi daemon is running"
+    echo ""
+    echo "Current mDNS hostname:"
+    avahi-resolve -n $(hostname).local 2>/dev/null || echo "  (hostname resolution will be available shortly)"
+else
+    echo "✗ Warning: Avahi daemon failed to start"
+fi
 
 echo ""
 echo "Verifying system packages..."
@@ -116,6 +166,13 @@ echo "=================================="
 echo "Installation completed successfully!"
 echo "=================================="
 echo ""
+echo "mDNS Configuration:"
+echo "  Your device should be accessible at: "
+echo ""
+echo "             /--------------------------------\"
+echo "             | http://$(hostname).local:8080  |"
+echo "             \--------------------------------/"
+echo ""
 echo "Systemd service commands:"
 echo "  Start:   sudo systemctl start co2minimeter.service"
 echo "  Stop:    sudo systemctl stop co2minimeter.service"
@@ -131,7 +188,8 @@ echo "  2. Run the script:"
 echo "     python3 co2minimeter.py"
 echo ""
 echo "  3. Access the web interface at:"
-echo "     http://localhost:8080"
+echo "     http://localhost:8080 (local)"
+echo "     http://$(hostname).local:8080 (network)"
 echo ""
 echo "To deactivate the virtual environment when done:"
 echo "  deactivate"
