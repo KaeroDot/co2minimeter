@@ -63,7 +63,9 @@ else:
     )
 
 # Configuration
-CO2_MEASUREMENT_INTERVAL = 5  # Measurement interval in seconds
+CO2_MEASUREMENT_INTERVAL = 60  # Measurement interval in seconds
+SENSOR_WARMUP_READINGS = 2  # Number of initial sensor readings to skip
+PLOT_UPDATE_INTERVAL = 900  # Plot update interval in seconds (15 minutes)
 WEB_SERVER_PORT = 8080
 HOURS_TO_KEEP = 12  # Keep last 12 hours of measurements
 DATA_DIR = os.path.join(os.path.dirname(os.path.realpath(__file__)), "data")
@@ -230,6 +232,7 @@ def generate_plot():
         ax_png.plot(timestamps_gapped, values_gapped, color='#2E7D32', linewidth=1)
         ax_png.set_ylim(400, 2000)
         ax_png.set_yticks([500, 1000, 1500])
+        ax_png.set_yticklabels(['0.5k', '1k', '1.5k'])
         ax_png.tick_params(axis='y', labelsize=6)
         ax_png.set_xlim(start_time, now)
         ax_png.xaxis.set_major_locator(mdates.HourLocator(interval=1))
@@ -267,8 +270,8 @@ class PlotGenerator(threading.Thread):
                 self.display_thread.display_condition.notify()
         
         while not shutdown_event.is_set():
-            # Wait 15 minutes (900 seconds)
-            if shutdown_event.wait(timeout=900):
+            # Wait for configured plot update interval
+            if shutdown_event.wait(timeout=PLOT_UPDATE_INTERVAL):
                 break
             generate_plot()
             
@@ -287,6 +290,7 @@ class CO2Sensor(threading.Thread):
         self.display_thread = display_thread
         self.sensor = None
         self.use_hardware = False
+        self.readings_to_skip = 0  # Number of initial readings to skip
         
     def init_sensor(self):
         """Initialize SCD30 sensor hardware"""
@@ -325,6 +329,8 @@ class CO2Sensor(threading.Thread):
             # Start periodic measurements
             self.sensor.start_periodic_measurement(0)
             self.use_hardware = True
+            self.readings_to_skip = SENSOR_WARMUP_READINGS
+            print(f"Will skip first {SENSOR_WARMUP_READINGS} sensor readings (warm-up period)")
             return True
             
         except Exception as e:
@@ -344,6 +350,12 @@ class CO2Sensor(threading.Thread):
                     co2_concentration, temperature, humidity = self.sensor.blocking_read_measurement_data()
                     co2_value = int(co2_concentration)
                     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    
+                    # Skip first readings if needed
+                    if self.readings_to_skip > 0:
+                        self.readings_to_skip -= 1
+                        print(f"Skipping initial reading {SENSOR_WARMUP_READINGS - self.readings_to_skip}/{SENSOR_WARMUP_READINGS}: {co2_value} ppm")
+                        continue
                 else:
                     # Simulate CO2 reading with randomized interval (50% to 150% of base interval)
                     co2_value = random.randint(400, 2000)
