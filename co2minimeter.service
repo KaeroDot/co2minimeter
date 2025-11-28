@@ -1,0 +1,16 @@
+[Unit]
+Description=CO2 Minimeter Monitor
+After=network.target
+
+[Service]
+Type=simple
+User=%USER%
+WorkingDirectory=%INSTALL_DIR%
+ExecStart=%INSTALL_DIR%/venv/bin/python3 %INSTALL_DIR%/co2minimeter.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
