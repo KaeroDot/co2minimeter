@@ -1,5 +1,5 @@
 [Unit]
-Description=CO2 Minimeter Monitor
+Description=CO2minimeter
 After=network.target
 
 [Service]

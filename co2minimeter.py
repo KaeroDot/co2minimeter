@@ -77,7 +77,7 @@ measurement_lock = threading.Lock()
 shutdown_event = threading.Event()
 
 
-def save_to_csv(timestamp_str, co2_value):
+def save_to_csv(timestamp_str, co2_value, temperature, humidity):
     """Save measurement to daily CSV file"""
     try:
         # Create data directory if it doesn't exist
@@ -98,8 +98,8 @@ def save_to_csv(timestamp_str, co2_value):
         with open(filepath, 'a', newline='') as csvfile:
             writer = csv.writer(csvfile)
             if not file_exists:
-                writer.writerow(['YYYY-MM-DD', 'CO2, relative (x10^6)'])
-            writer.writerow([timestamp_str, co2_value])
+                writer.writerow(['YYYY-MM-DD', 'CO2, relative (x10^6)', 'Temperature (°C)', 'Humidity (%)'])
+            writer.writerow([timestamp_str, co2_value, f"{temperature:.1f}", f"{humidity:.1f}"])
             
     except Exception as e:
         print(f"Error saving to CSV: {e}")
@@ -164,11 +164,21 @@ def cleanup_old_measurements():
         
         with measurement_lock:
             # Filter out measurements older than cutoff time
-            measurements = [
-                (timestamp_str, value)
-                for timestamp_str, value in measurements
-                if datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S") >= cutoff_time
-            ]
+            # Handle both old format (2 values) and new format (4 values)
+            filtered = []
+            for item in measurements:
+                if len(item) == 2:
+                    timestamp_str, value = item
+                    # Convert old format to new format with default values
+                    item = (timestamp_str, value, 0.0, 0.0)
+                elif len(item) == 4:
+                    timestamp_str, value, temp, hum = item
+                else:
+                    continue
+                
+                if datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S") >= cutoff_time:
+                    filtered.append(item)
+            measurements = filtered
     except Exception as e:
         print(f"Error cleaning up old measurements: {e}")
 
@@ -183,18 +193,38 @@ def generate_plot():
             print("No data to plot")
             return
         
-        # Parse timestamps and values
-        timestamps = [datetime.strptime(ts, "%Y-%m-%d %H:%M:%S") for ts, _ in data]
-        values = [val for _, val in data]
+        # Parse timestamps and values, handling both old (2-value) and new (4-value) formats
+        timestamps = []
+        values = []
+        temperatures = []
+        humidities = []
+        
+        for item in data:
+            if len(item) == 2:
+                ts, val = item
+                timestamps.append(datetime.strptime(ts, "%Y-%m-%d %H:%M:%S"))
+                values.append(val)
+                temperatures.append(0.0)
+                humidities.append(0.0)
+            elif len(item) == 4:
+                ts, val, temp, hum = item
+                timestamps.append(datetime.strptime(ts, "%Y-%m-%d %H:%M:%S"))
+                values.append(val)
+                temperatures.append(temp)
+                humidities.append(hum)
         
         # Insert NaN values where gaps are larger than 5 minutes
         timestamps_gapped = []
         values_gapped = []
+        temperatures_gapped = []
+        humidities_gapped = []
         max_gap = timedelta(minutes=5)
         
         for i in range(len(timestamps)):
             timestamps_gapped.append(timestamps[i])
             values_gapped.append(values[i])
+            temperatures_gapped.append(temperatures[i])
+            humidities_gapped.append(humidities[i])
             
             # Check if there's a gap to the next point
             if i < len(timestamps) - 1:
@@ -203,6 +233,8 @@ def generate_plot():
                     # Insert NaN to create a gap in the plot
                     timestamps_gapped.append(timestamps[i] + time_diff / 2)
                     values_gapped.append(float('nan'))
+                    temperatures_gapped.append(float('nan'))
+                    humidities_gapped.append(float('nan'))
         
         # Set x-axis time range
         now = datetime.now()
@@ -210,16 +242,35 @@ def generate_plot():
         
         # Generate SVG with grid and time labels
         fig_svg, ax_svg = plt.subplots(figsize=(10, 3), dpi=100)
-        ax_svg.plot(timestamps_gapped, values_gapped, color='#2E7D32', linewidth=2)
+        
+        # Plot CO2 on primary y-axis (left)
+        ax_svg.plot(timestamps_gapped, values_gapped, color='#2E7D32', linewidth=2, label='CO2')
         ax_svg.set_ylim(400, 2000)
         ax_svg.set_yticks([500, 1000, 1500])
+        ax_svg.set_ylabel('CO2 (x10⁻⁶)', fontsize=10, color='#2E7D32')
+        ax_svg.tick_params(axis='y', labelcolor='#2E7D32', labelsize=10)
+        
+        # Create second y-axis for temperature (right)
+        ax_temp = ax_svg.twinx()
+        ax_temp.plot(timestamps_gapped, temperatures_gapped, color='red', linewidth=2, label='Temperature')
+        ax_temp.set_ylabel('Temperature (°C)', fontsize=10, color='red')
+        ax_temp.tick_params(axis='y', labelcolor='red', labelsize=10)
+        
+        # Create third y-axis for humidity (right, offset)
+        ax_hum = ax_svg.twinx()
+        # Offset the third axis to the right
+        ax_hum.spines['right'].set_position(('outward', 60))
+        ax_hum.plot(timestamps_gapped, humidities_gapped, color='blue', linewidth=2, label='Humidity')
+        ax_hum.set_ylabel('Humidity (%)', fontsize=10, color='blue')
+        ax_hum.tick_params(axis='y', labelcolor='blue', labelsize=10)
+        
+        # Set x-axis properties
         ax_svg.set_xlim(start_time, now)
         ax_svg.xaxis.set_major_locator(mdates.HourLocator(interval=1))
         ax_svg.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
         ax_svg.tick_params(axis='x', labelsize=8, rotation=45)
-        ax_svg.tick_params(axis='y', labelsize=10)
         ax_svg.grid(True, alpha=0.3, linewidth=0.5)
-        ax_svg.set_ylabel('CO2 (x10⁻⁶)', fontsize=10)
+        
         plt.tight_layout()
         
         svg_path = os.path.join(DATA_DIR, "data_latest_plot.svg")
@@ -229,7 +280,7 @@ def generate_plot():
         
         # Generate PNG without grid (245x70 pixels for e-ink display)
         fig_png, ax_png = plt.subplots(figsize=(2.45, 0.7), dpi=100)
-        ax_png.plot(timestamps_gapped, values_gapped, color='#2E7D32', linewidth=1)
+        ax_png.plot(timestamps_gapped, values_gapped, color="#000000", linewidth=1)
         ax_png.set_ylim(400, 2000)
         ax_png.set_yticks([500, 1000, 1500])
         ax_png.set_yticklabels(['0.5k', '1k', '1.5k'])
@@ -354,29 +405,31 @@ class CO2Sensor(threading.Thread):
                     # Skip first readings if needed
                     if self.readings_to_skip > 0:
                         self.readings_to_skip -= 1
-                        print(f"Skipping initial reading {SENSOR_WARMUP_READINGS - self.readings_to_skip}/{SENSOR_WARMUP_READINGS}: {co2_value} ppm")
+                        print(f"Skipping initial reading {SENSOR_WARMUP_READINGS - self.readings_to_skip}/{SENSOR_WARMUP_READINGS}: {co2_value} ppm, {temperature:.1f}°C, {humidity:.1f}%")
                         continue
                 else:
                     # Simulate CO2 reading with randomized interval (50% to 150% of base interval)
                     co2_value = random.randint(400, 2000)
+                    temperature = random.uniform(18.0, 26.0)
+                    humidity = random.uniform(30.0, 70.0)
                     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     # Random delay: 50% to 150% of CO2_MEASUREMENT_INTERVAL
                     random_interval = random.uniform(
-                        CO2_MEASUREMENT_INTERVAL * 0.5,
-                        CO2_MEASUREMENT_INTERVAL * 1.5
+                        CO2_MEASUREMENT_INTERVAL * 0.05,
+                        CO2_MEASUREMENT_INTERVAL * 0.15
                     )
                     time.sleep(random_interval)
                 
                 with measurement_lock:
-                    measurements.append((timestamp, co2_value))
+                    measurements.append((timestamp, co2_value, temperature, humidity))
                 
                 # Clean up old measurements (older than HOURS_TO_KEEP)
                 cleanup_old_measurements()
 
                 # Save to CSV file
-                save_to_csv(timestamp, co2_value)
+                save_to_csv(timestamp, co2_value, temperature, humidity)
                 
-                print(f"CO2: {co2_value}x10^-6 at {timestamp}")
+                print(f"CO2: {co2_value}x10^-6, Temperature: {temperature:.1f}°C, Humidity: {humidity:.1f}% at {timestamp}")
 
                 # Notify display thread of new measurement
                 if hasattr(self.display_thread, "display_condition"):
@@ -609,9 +662,9 @@ class WebServer(threading.Thread):
 
                     # Generate measurement rows
                     measurements_html = ""
-                    for timestamp, value in reversed(current_measurements):
+                    for timestamp, value, temp, hum in reversed(current_measurements):
                         measurements_html += (
-                            f"<tr><td>{timestamp}</td><td>{value}</td></tr>"
+                            f"<tr><td>{timestamp}</td><td>{value}</td><td>{temp:.1f}</td><td>{hum:.1f}</td></tr>"
                         )
 
                     # Replace the placeholder with actual measurements
