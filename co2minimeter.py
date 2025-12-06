@@ -133,14 +133,16 @@ def load_recent_measurements():
                     reader = csv.reader(csvfile)
                     next(reader, None)  # Skip header
                     for row in reader:
-                        if len(row) >= 2:
+                        if len(row) >= 4:
                             timestamp_str = row[0]
                             co2_value = int(row[1])
+                            temperature = float(row[2])
+                            humidity = float(row[3])
                             
                             # Parse timestamp and check if it's within last 12 hours
                             measurement_time = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
                             if measurement_time >= cutoff_time:
-                                loaded_measurements.append((timestamp_str, co2_value))
+                                loaded_measurements.append((timestamp_str, co2_value, temperature, humidity))
             except Exception as e:
                 print(f"Error reading {filepath}: {e}")
         
@@ -164,21 +166,11 @@ def cleanup_old_measurements():
         
         with measurement_lock:
             # Filter out measurements older than cutoff time
-            # Handle both old format (2 values) and new format (4 values)
-            filtered = []
-            for item in measurements:
-                if len(item) == 2:
-                    timestamp_str, value = item
-                    # Convert old format to new format with default values
-                    item = (timestamp_str, value, 0.0, 0.0)
-                elif len(item) == 4:
-                    timestamp_str, value, temp, hum = item
-                else:
-                    continue
-                
-                if datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S") >= cutoff_time:
-                    filtered.append(item)
-            measurements = filtered
+            measurements = [
+                (timestamp_str, value, temp, hum)
+                for timestamp_str, value, temp, hum in measurements
+                if datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S") >= cutoff_time
+            ]
     except Exception as e:
         print(f"Error cleaning up old measurements: {e}")
 
@@ -193,25 +185,11 @@ def generate_plot():
             print("No data to plot")
             return
         
-        # Parse timestamps and values, handling both old (2-value) and new (4-value) formats
-        timestamps = []
-        values = []
-        temperatures = []
-        humidities = []
-        
-        for item in data:
-            if len(item) == 2:
-                ts, val = item
-                timestamps.append(datetime.strptime(ts, "%Y-%m-%d %H:%M:%S"))
-                values.append(val)
-                temperatures.append(0.0)
-                humidities.append(0.0)
-            elif len(item) == 4:
-                ts, val, temp, hum = item
-                timestamps.append(datetime.strptime(ts, "%Y-%m-%d %H:%M:%S"))
-                values.append(val)
-                temperatures.append(temp)
-                humidities.append(hum)
+        # Parse timestamps and values
+        timestamps = [datetime.strptime(ts, "%Y-%m-%d %H:%M:%S") for ts, _, _, _ in data]
+        values = [val for _, val, _, _ in data]
+        temperatures = [temp for _, _, temp, _ in data]
+        humidities = [hum for _, _, _, hum in data]
         
         # Insert NaN values where gaps are larger than 5 minutes
         timestamps_gapped = []
