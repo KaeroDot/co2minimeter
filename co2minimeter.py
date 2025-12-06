@@ -289,6 +289,7 @@ def generate_plot():
         ax_png.xaxis.set_major_locator(mdates.HourLocator(interval=1))
         ax_png.xaxis.set_major_formatter(mdates.DateFormatter(''))
         ax_png.tick_params(axis='x', length=3, width=0.5)
+        ax_png.grid(True, alpha=1, axis='x')
         ax_png.set_xlabel('')
         ax_png.set_ylabel('')
         plt.subplots_adjust(left=0.12, right=0.98, top=0.98, bottom=0.08)
