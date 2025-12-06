@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CO2 Monitor - History</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        h1 { color: #333; }
+        .info { 
+            padding: 10px; 
+            background-color: #e7f3fe; 
+            border-left: 4px solid #2196F3;
+            margin: 20px 0;
+        }
+        .controls {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #f5f5f5;
+            border-radius: 4px;
+        }
+        .controls label {
+            display: inline-block;
+            margin-right: 10px;
+            font-weight: bold;
+        }
+        .controls input[type="datetime-local"] {
+            padding: 5px;
+            margin-right: 20px;
+            font-size: 14px;
+        }
+        .plot-container { 
+            margin: 20px 0; 
+            border: 1px solid #ddd; 
+            padding: 10px; 
+            background-color: #f9f9f9;
+        }
+        .plot-container object { 
+            width: 100%; 
+            height: auto; 
+        }
+        .button {
+            display: inline-block;
+            padding: 10px 20px;
+            margin: 10px 0;
+            background-color: #4CAF50;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        .button:hover {
+            background-color: #45a049;
+        }
+        .button.secondary {
+            background-color: #008CBA;
+        }
+        .button.secondary:hover {
+            background-color: #007399;
+        }
+        .quick-buttons {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #f5f5f5;
+            border-radius: 4px;
+        }
+        .quick-buttons .button {
+            margin: 5px;
+            padding: 8px 16px;
+            font-size: 14px;
+            background-color: #607D8B;
+        }
+        .quick-buttons .button:hover {
+            background-color: #546E7A;
+        }
+    </style>
+    <script>
+        function updatePlot() {
+            const startDate = document.getElementById('startDate').value;
+            const endDate = document.getElementById('endDate').value;
+            
+            if (startDate && endDate) {
+                // Reload page with new date parameters
+                window.location.href = `/history?start=${encodeURIComponent(startDate)}&end=${encodeURIComponent(endDate)}`;
+            }
+        }
+        
+        function setTimeRange(hours) {
+            const now = new Date();
+            const start = new Date(now.getTime() - hours * 60 * 60 * 1000);
+            
+            // Format as YYYY-MM-DDTHH:MM
+            const formatDateTime = (date) => {
+                const year = date.getFullYear();
+                const month = String(date.getMonth() + 1).padStart(2, '0');
+                const day = String(date.getDate()).padStart(2, '0');
+                const hour = String(date.getHours()).padStart(2, '0');
+                const minute = String(date.getMinutes()).padStart(2, '0');
+                return `${year}-${month}-${day}T${hour}:${minute}`;
+            };
+            
+            document.getElementById('startDate').value = formatDateTime(start);
+            document.getElementById('endDate').value = formatDateTime(now);
+            updatePlot();
+        }
+        
+        function setYesterday() {
+            const now = new Date();
+            const yesterday = new Date(now);
+            yesterday.setDate(yesterday.getDate() - 1);
+            
+            // Set to start of yesterday (00:00)
+            const startOfYesterday = new Date(yesterday);
+            startOfYesterday.setHours(0, 0, 0, 0);
+            
+            // Set to end of yesterday (23:59)
+            const endOfYesterday = new Date(yesterday);
+            endOfYesterday.setHours(23, 59, 0, 0);
+            
+            const formatDateTime = (date) => {
+                const year = date.getFullYear();
+                const month = String(date.getMonth() + 1).padStart(2, '0');
+                const day = String(date.getDate()).padStart(2, '0');
+                const hour = String(date.getHours()).padStart(2, '0');
+                const minute = String(date.getMinutes()).padStart(2, '0');
+                return `${year}-${month}-${day}T${hour}:${minute}`;
+            };
+            
+            document.getElementById('startDate').value = formatDateTime(startOfYesterday);
+            document.getElementById('endDate').value = formatDateTime(endOfYesterday);
+            updatePlot();
+        }
+        
+        // Auto-update plot when dates change
+        window.addEventListener('DOMContentLoaded', function() {
+            document.getElementById('startDate').addEventListener('change', updatePlot);
+            document.getElementById('endDate').addEventListener('change', updatePlot);
+        });
+    </script>
+</head>
+<body>
+    <h1>CO<sub>2</sub> mini meter - History</h1>
+    
+    <a href="/" class="button secondary">← Back to Main Page</a>
+    
+    <div class="info">
+        <strong>Available data range:</strong> {{DATA_RANGE}}
+    </div>
+    
+    <div class="quick-buttons">
+        <strong>Quick select:</strong>
+        <button class="button" onclick="setYesterday()">Yesterday</button>
+        <button class="button" onclick="setTimeRange(24)">Last 24 hours</button>
+        <button class="button" onclick="setTimeRange(48)">Last 48 hours</button>
+        <button class="button" onclick="setTimeRange(168)">Last 7 days</button>
+        <button class="button" onclick="setTimeRange(720)">Last 30 days</button>
+    </div>
+    
+    <div class="controls">
+        <label for="startDate">From:</label>
+        <input type="datetime-local" id="startDate" name="startDate" value="{{START_DATE}}">
+        
+        <label for="endDate">To:</label>
+        <input type="datetime-local" id="endDate" name="endDate" value="{{END_DATE}}">
+    </div>
+    
+    <div class="plot-container">
+        <h2>Historical Data</h2>
+        <object data="/history_plot.svg" type="image/svg+xml"></object>
+    </div>
+</body>
+</html>

@@ -13,6 +13,7 @@ matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from urllib.parse import urlparse, parse_qs
 from datetime import datetime, timedelta
 from queue import Queue
 from PIL import Image, ImageDraw, ImageFont
@@ -223,8 +224,14 @@ def generate_plot():
         
         # Plot CO2 on primary y-axis (left)
         ax_svg.plot(timestamps_gapped, values_gapped, color='#2E7D32', linewidth=2, label='CO2')
-        ax_svg.set_ylim(400, 2000)
-        ax_svg.set_yticks([500, 1000, 1500])
+        
+        # Auto-scale CO2 y-axis from 400 to maximum value in data
+        max_co2 = max(values) if values else 2000
+        # Round up to nearest 500
+        max_co2_rounded = ((max_co2 + 499) // 500) * 500
+        max_co2_rounded = max(max_co2_rounded, 1000)  # Minimum 1000
+        ax_svg.set_ylim(400, max_co2_rounded)
+        
         ax_svg.set_ylabel('CO2 (x10⁻⁶)', fontsize=10, color='#2E7D32')
         ax_svg.tick_params(axis='y', labelcolor='#2E7D32', labelsize=10)
         
@@ -279,6 +286,198 @@ def generate_plot():
         
     except Exception as e:
         print(f"Error generating plot: {e}")
+
+
+def load_historical_data(start_time, end_time):
+    """Load measurements from CSV files within specified time range"""
+    historical_data = []
+    
+    try:
+        if not os.path.exists(DATA_DIR):
+            return historical_data
+        
+        # Get all CSV files in the date range
+        current_date = start_time.date()
+        end_date = end_time.date()
+        
+        while current_date <= end_date:
+            filename = f"data_{current_date.strftime('%Y-%m-%d')}.csv"
+            filepath = os.path.join(DATA_DIR, filename)
+            
+            if os.path.isfile(filepath):
+                try:
+                    with open(filepath, 'r') as csvfile:
+                        reader = csv.reader(csvfile)
+                        next(reader, None)  # Skip header
+                        for row in reader:
+                            if len(row) >= 4:
+                                timestamp_str = row[0]
+                                co2_value = int(row[1])
+                                temperature = float(row[2])
+                                humidity = float(row[3])
+                                
+                                measurement_time = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
+                                if start_time <= measurement_time <= end_time:
+                                    historical_data.append((timestamp_str, co2_value, temperature, humidity))
+                except Exception as e:
+                    print(f"Error reading {filepath}: {e}")
+            
+            current_date += timedelta(days=1)
+        
+        historical_data.sort(key=lambda x: x[0])
+        
+    except Exception as e:
+        print(f"Error loading historical data: {e}")
+    
+    return historical_data
+
+
+def get_data_range():
+    """Get the available data range from CSV files"""
+    try:
+        if not os.path.exists(DATA_DIR):
+            return None, None
+        
+        csv_files = sorted([f for f in os.listdir(DATA_DIR) if f.startswith('data_') and f.endswith('.csv')])
+        
+        if not csv_files:
+            return None, None
+        
+        # Get first and last dates from filenames
+        first_file = csv_files[0]
+        last_file = csv_files[-1]
+        
+        # Extract dates from filenames (format: data_YYYY-MM-DD.csv)
+        first_date_str = first_file.replace('data_', '').replace('.csv', '')
+        last_date_str = last_file.replace('data_', '').replace('.csv', '')
+        
+        # Get actual first and last timestamps from the files
+        first_timestamp = None
+        last_timestamp = None
+        
+        # Read first timestamp from first file
+        try:
+            with open(os.path.join(DATA_DIR, first_file), 'r') as f:
+                reader = csv.reader(f)
+                next(reader, None)  # Skip header
+                first_row = next(reader, None)
+                if first_row:
+                    first_timestamp = datetime.strptime(first_row[0], "%Y-%m-%d %H:%M:%S")
+        except:
+            pass
+        
+        # Read last timestamp from last file
+        try:
+            with open(os.path.join(DATA_DIR, last_file), 'r') as f:
+                reader = csv.reader(f)
+                next(reader, None)  # Skip header
+                rows = list(reader)
+                if rows:
+                    last_timestamp = datetime.strptime(rows[-1][0], "%Y-%m-%d %H:%M:%S")
+        except:
+            pass
+        
+        return first_timestamp, last_timestamp
+        
+    except Exception as e:
+        print(f"Error getting data range: {e}")
+        return None, None
+
+
+def generate_history_plot(start_time, end_time):
+    """Generate SVG plot for historical data within specified time range"""
+    try:
+        data = load_historical_data(start_time, end_time)
+        
+        if not data:
+            print("No historical data to plot")
+            return
+        
+        # Parse timestamps and values
+        timestamps = [datetime.strptime(ts, "%Y-%m-%d %H:%M:%S") for ts, _, _, _ in data]
+        values = [val for _, val, _, _ in data]
+        temperatures = [temp for _, _, temp, _ in data]
+        humidities = [hum for _, _, _, hum in data]
+        
+        # Insert NaN values where gaps are larger than 5 minutes
+        timestamps_gapped = []
+        values_gapped = []
+        temperatures_gapped = []
+        humidities_gapped = []
+        max_gap = timedelta(minutes=5)
+        
+        for i in range(len(timestamps)):
+            timestamps_gapped.append(timestamps[i])
+            values_gapped.append(values[i])
+            temperatures_gapped.append(temperatures[i])
+            humidities_gapped.append(humidities[i])
+            
+            # Check if there's a gap to the next point
+            if i < len(timestamps) - 1:
+                time_diff = timestamps[i + 1] - timestamps[i]
+                if time_diff > max_gap:
+                    # Insert NaN to create a gap in the plot
+                    timestamps_gapped.append(timestamps[i] + time_diff / 2)
+                    values_gapped.append(float('nan'))
+                    temperatures_gapped.append(float('nan'))
+                    humidities_gapped.append(float('nan'))
+        
+        # Generate SVG with grid and time labels
+        fig_svg, ax_svg = plt.subplots(figsize=(10, 3), dpi=100)
+        
+        # Plot CO2 on primary y-axis (left)
+        ax_svg.plot(timestamps_gapped, values_gapped, color='#2E7D32', linewidth=2, label='CO2')
+        
+        # Auto-scale CO2 y-axis from 400 to maximum value in data
+        max_co2 = max(values) if values else 2000
+        # Round up to nearest 500
+        max_co2_rounded = ((max_co2 + 499) // 500) * 500
+        max_co2_rounded = max(max_co2_rounded, 1000)  # Minimum 1000
+        ax_svg.set_ylim(400, max_co2_rounded)
+        
+        ax_svg.set_ylabel('CO2 (x10⁻⁶)', fontsize=10, color='#2E7D32')
+        ax_svg.tick_params(axis='y', labelcolor='#2E7D32', labelsize=10)
+        
+        # Create second y-axis for temperature (right)
+        ax_temp = ax_svg.twinx()
+        ax_temp.plot(timestamps_gapped, temperatures_gapped, color='red', linewidth=2, label='Temperature')
+        ax_temp.set_ylabel('Temperature (°C)', fontsize=10, color='red')
+        ax_temp.tick_params(axis='y', labelcolor='red', labelsize=10)
+        
+        # Create third y-axis for humidity (right, offset)
+        ax_hum = ax_svg.twinx()
+        ax_hum.spines['right'].set_position(('outward', 60))
+        ax_hum.plot(timestamps_gapped, humidities_gapped, color='blue', linewidth=2, label='Humidity')
+        ax_hum.set_ylabel('Humidity (%)', fontsize=10, color='blue')
+        ax_hum.tick_params(axis='y', labelcolor='blue', labelsize=10)
+        
+        # Set x-axis properties
+        ax_svg.set_xlim(start_time, end_time)
+        
+        # Adjust time formatting based on range
+        time_range = end_time - start_time
+        if time_range <= timedelta(hours=24):
+            ax_svg.xaxis.set_major_locator(mdates.HourLocator(interval=1))
+            ax_svg.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d %H:%M'))
+        elif time_range <= timedelta(days=7):
+            ax_svg.xaxis.set_major_locator(mdates.HourLocator(interval=6))
+            ax_svg.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d %H:%M'))
+        else:
+            ax_svg.xaxis.set_major_locator(mdates.DayLocator())
+            ax_svg.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+        
+        ax_svg.tick_params(axis='x', labelsize=8, rotation=45)
+        ax_svg.grid(True, alpha=0.3, linewidth=0.5)
+        
+        plt.tight_layout()
+        
+        svg_path = os.path.join(DATA_DIR, "history_plot.svg")
+        plt.savefig(svg_path, format='svg', dpi=100)
+        print(f"History plot saved: {svg_path}")
+        plt.close(fig_svg)
+        
+    except Exception as e:
+        print(f"Error generating history plot: {e}")
 
 
 class PlotGenerator(threading.Thread):
@@ -607,8 +806,13 @@ class WebServer(threading.Thread):
     def run(self):
         class RequestHandler(BaseHTTPRequestHandler):
             def do_GET(_self):
+                # Parse URL and query parameters
+                parsed_url = urlparse(_self.path)
+                path = parsed_url.path
+                query_params = parse_qs(parsed_url.query)
+                
                 # Serve SVG plot file
-                if _self.path == '/plot.svg':
+                if path == '/plot.svg':
                     svg_path = os.path.join(DATA_DIR, "data_latest_plot.svg")
                     if os.path.exists(svg_path):
                         _self.send_response(200)
@@ -621,7 +825,82 @@ class WebServer(threading.Thread):
                         _self.end_headers()
                     return
                 
-                # Serve HTML page
+                # Serve history plot SVG
+                if path == '/history_plot.svg':
+                    svg_path = os.path.join(DATA_DIR, "history_plot.svg")
+                    if os.path.exists(svg_path):
+                        _self.send_response(200)
+                        _self.send_header("Content-type", "image/svg+xml")
+                        _self.end_headers()
+                        with open(svg_path, 'rb') as f:
+                            _self.wfile.write(f.read())
+                    else:
+                        _self.send_response(404)
+                        _self.end_headers()
+                    return
+                
+                # Serve history page
+                if path == '/history':
+                    _self.send_response(200)
+                    _self.send_header("Content-type", "text/html")
+                    _self.end_headers()
+                    
+                    try:
+                        # Get data range
+                        first_timestamp, last_timestamp = get_data_range()
+                        
+                        if first_timestamp and last_timestamp:
+                            data_range = f"{first_timestamp.strftime('%Y-%m-%d %H:%M')} to {last_timestamp.strftime('%Y-%m-%d %H:%M')}"
+                            
+                            # Get date parameters from query string or use defaults (last 12 hours)
+                            now = datetime.now()
+                            default_start = now - timedelta(hours=12)
+                            default_end = now
+                            
+                            if 'start' in query_params and 'end' in query_params:
+                                try:
+                                    start_str = query_params['start'][0]
+                                    end_str = query_params['end'][0]
+                                    start_time = datetime.strptime(start_str, "%Y-%m-%dT%H:%M")
+                                    end_time = datetime.strptime(end_str, "%Y-%m-%dT%H:%M")
+                                except:
+                                    start_time = default_start
+                                    end_time = default_end
+                            else:
+                                start_time = default_start
+                                end_time = default_end
+                            
+                            # Generate history plot
+                            generate_history_plot(start_time, end_time)
+                            
+                            # Format dates for HTML input fields
+                            start_date_html = start_time.strftime("%Y-%m-%dT%H:%M")
+                            end_date_html = end_time.strftime("%Y-%m-%dT%H:%M")
+                        else:
+                            data_range = "No data available"
+                            start_date_html = ""
+                            end_date_html = ""
+                        
+                        # Read the HTML template
+                        template_path = os.path.join(
+                            os.path.dirname(os.path.abspath(__file__)),
+                            "co2minimeter_history.html",
+                        )
+                        with open(template_path, "r") as f:
+                            html = f.read()
+                        
+                        # Replace placeholders
+                        html = html.replace("{{DATA_RANGE}}", data_range)
+                        html = html.replace("{{START_DATE}}", start_date_html)
+                        html = html.replace("{{END_DATE}}", end_date_html)
+                        
+                    except Exception as e:
+                        html = f"<html><body><h1>Error</h1><p>Could not load history page: {e}</p></body></html>"
+                    
+                    _self.wfile.write(html.encode("utf-8"))
+                    return
+                
+                # Serve main page
                 _self.send_response(200)
                 _self.send_header("Content-type", "text/html")
                 _self.end_headers()
