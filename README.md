@@ -56,19 +56,29 @@ The CO<sub>2</sub> Mini Meter software provides comprehensive monitoring and dat
 
 - **Data Fields**: Timestamp, CO<sub>2</sub> (×10⁻⁶), Temperature (°C), Humidity (%)
 - **Automatic Cleanup**: Maintains rolling 12-hour history in memory
-- **Persistent Storage**: Historical data remains available in CSV files
+- **Persistent Storage**: All historical data remains available in CSV files for long-term analysis
 
 ### 4.3. Web Interface
 
 - **Real-time Dashboard**: Access via `http://[device-ip]:8080` or `http://[hostname].local:8080`
-- **Auto-refresh**: Page updates every 10 seconds
+- **Auto-refresh**: Main page updates every 10 seconds
 - **Interactive Plots**:
   - SVG plot showing 12-hour trends for all three parameters
-  - CO<sub>2</sub> (green line, left axis)
-  - Temperature (red line, right axis)
-  - Humidity (blue line, right axis, offset)
+  - CO<sub>2</sub> (green line, left axis) - auto-scaled from 400 ppm to maximum value in data
+  - Temperature (red line, right axis) - auto-scaled
+  - Humidity (blue line, right axis, offset) - auto-scaled
   - Gap detection: Shows breaks in data when measurements are interrupted (e.g. restart of the device)
-- **Measurement Table**: Complete list of all measurements in the current 12-hour window
+  - Date format: Always includes year (YYYY-MM-DD) to avoid confusion
+- **Measurement Table**: Complete list of all measurements in the current 12-hour window with timestamp, CO<sub>2</sub>, temperature, and humidity
+- **History Page**: 
+  - Access via "History" button on main page
+  - View historical data from CSV files
+  - Shows available data range
+  - Manual date/time selection with datetime pickers
+  - Quick select buttons: "Yesterday", "Last 24 hours", "Last 48 hours", "Last 7 days", "Last 30 days"
+  - Dynamic plot generation based on selected time range
+  - Adaptive time axis formatting (hourly for <24h, 6-hourly for <7 days, daily for longer periods)
+  - All three parameters displayed with auto-scaled axes
 
 ### 4.4. System Integration
 
@@ -143,6 +153,7 @@ sudo journalctl -u co2minimeter.service -f
 - **Local**: `http://localhost:8080`
 - **Network**: `http://co2minimeter.local:8080`
 - **IP Address**: `http://[device-ip]:8080`
+- **History Page**: Click "History" button on main page or navigate to `http://[device-ip]:8080/history`
 
 ## 7. File Structure
 
@@ -150,7 +161,8 @@ sudo journalctl -u co2minimeter.service -f
 co2minimeter/
 ├── co2minimeter.py           # Main application
 ├── co2minimeter.service      # Systemd service file
-├── co2minimeter_webpage.html # Web interface template
+├── co2minimeter_webpage.html # Main web interface template
+├── co2minimeter_history.html # History page template
 ├── install.sh                # Installation script
 ├── requirements.txt          # Python dependencies
 ├── README.md                 # This file
@@ -158,8 +170,9 @@ co2minimeter/
 │   └── DejaVuSansMono-Bold.ttf
 ├── data/                     # Generated data (auto-created)
 │   ├── data_YYYY-MM-DD.csv  # Daily CSV files
-│   ├── data_latest_plot.svg # Web plot
-│   └── data_latest_plot.png # Display plot
+│   ├── data_latest_plot.svg # Main page plot (SVG)
+│   ├── data_latest_plot.png # E-ink display plot (PNG)
+│   └── history_plot.svg     # History page plot (SVG)
 └── e-Paper/                  # Waveshare e-Paper library
 ```
 
