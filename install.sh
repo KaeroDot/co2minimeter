@@ -22,9 +22,9 @@ echo ""
 
 # Install system packages
 echo "Installing system packages (requires sudo)..."
-echo "This will install: python3-venv, python3-matplotlib, python3-pil, avahi-daemon, avahi-utils"
+echo "This will install: python3-venv, python3-matplotlib, python3-pil, python3-gpiozero, avahi-daemon, avahi-utils"
 sudo apt-get update
-sudo apt-get install -y python3-venv python3-matplotlib python3-pil avahi-daemon avahi-utils
+sudo apt-get install -y python3-venv python3-matplotlib python3-pil python3-gpiozero avahi-daemon avahi-utils
 
 echo ""
 echo "Configuring Avahi mDNS..."
@@ -80,6 +80,7 @@ echo ""
 echo "Verifying system packages..."
 python3 -c "import matplotlib; print(f'matplotlib {matplotlib.__version__} installed')"
 python3 -c "import PIL; print(f'Pillow {PIL.__version__} installed')"
+python3 -c "import gpiozero; print(f'gpiozero {gpiozero.__version__} installed')"
 
 # Create virtual environment with system site packages
 VENV_DIR="venv"
