@@ -18,6 +18,15 @@ from datetime import datetime, timedelta
 from queue import Queue
 from PIL import Image, ImageDraw, ImageFont
 
+# Try to import GPIO library for calibration button
+HAS_GPIO = False
+try:
+    import gpiozero
+    HAS_GPIO = True
+    print("GPIO library loaded successfully")
+except Exception as e:
+    print(f"Warning: Could not load GPIO library: {e}")
+
 # Try to import SCD30 sensor library
 HAS_SCD30_SENSOR = False
 try:
@@ -71,11 +80,16 @@ WEB_SERVER_PORT = 8080
 HOURS_TO_KEEP = 12  # Keep last 12 hours of measurements
 DATA_DIR = os.path.join(os.path.dirname(os.path.realpath(__file__)), "data")
 FONT_DIR = os.path.join(os.path.dirname(os.path.realpath(__file__)), "fonts")
+CALIBRATION_BUTTON_PIN = 21  # GPIO 21 (physical pin 40)
+CALIBRATION_REFERENCE_PPM = 427  # Reference CO2 level for forced calibration
 
 # Global variables
 measurements = []
 measurement_lock = threading.Lock()
 shutdown_event = threading.Event()
+calibration_event = threading.Event()
+calibration_in_progress = False
+calibration_lock = threading.Lock()
 
 
 def save_to_csv(timestamp_str, co2_value, temperature, humidity):
@@ -480,6 +494,55 @@ def generate_history_plot(start_time, end_time):
         print(f"Error generating history plot: {e}")
 
 
+class CalibrationButtonMonitor(threading.Thread):
+    """Thread to monitor calibration button (GPIO 21, pin 40)"""
+    
+    def __init__(self, display_thread, daemon=None):
+        super().__init__(daemon=daemon)
+        self.button = None
+        self.display_thread = display_thread
+        
+    def run(self):
+        if not HAS_GPIO:
+            print("GPIO library not available - calibration button disabled")
+            return
+        
+        try:
+            # Initialize button with pull-up resistor (button connects to GND)
+            self.button = gpiozero.Button(CALIBRATION_BUTTON_PIN, pull_up=True, bounce_time=0.1)
+            print(f"Calibration button initialized on GPIO {CALIBRATION_BUTTON_PIN} (pin 40)")
+            
+            while not shutdown_event.is_set():
+                # Wait for button press
+                if self.button.is_pressed:
+                    press_start = time.time()
+                    
+                    # Wait to see if it's held for 3 seconds
+                    while self.button.is_pressed and (time.time() - press_start) < 3.0:
+                        time.sleep(0.1)
+                    
+                    # If still pressed after 3 seconds, trigger calibration
+                    if self.button.is_pressed and (time.time() - press_start) >= 3.0:
+                        print("Calibration button: 3-second press detected!")
+                        with calibration_lock:
+                            calibration_in_progress = True
+                        calibration_event.set()
+                        
+                        # Notify display thread immediately
+                        if hasattr(self, 'display_thread') and hasattr(self.display_thread, 'display_condition'):
+                            with self.display_thread.display_condition:
+                                self.display_thread.display_condition.notify()
+                        
+                        # Wait for button release
+                        while self.button.is_pressed:
+                            time.sleep(0.1)
+                
+                time.sleep(0.1)
+                
+        except Exception as e:
+            print(f"Error in calibration button monitor: {e}")
+
+
 class PlotGenerator(threading.Thread):
     """Thread to generate plots every 15 minutes"""
     
@@ -547,6 +610,10 @@ class CO2Sensor(threading.Thread):
             major, minor = self.sensor.read_firmware_version()
             print(f"SCD30 sensor connected - Firmware: {major}.{minor}")
             
+            # Disable automatic self-calibration
+            self.sensor.activate_auto_calibration(1)
+            print("Automatic self-calibration disabled")
+            
             # Check and set measurement interval if needed
             current_interval = self.sensor.get_measurement_interval()
             print(f"Current measurement interval: {current_interval}s")
@@ -566,12 +633,81 @@ class CO2Sensor(threading.Thread):
             print(f"Failed to initialize SCD30 sensor: {e}")
             print("Falling back to simulated CO2 readings")
             return False
+    
+    def perform_calibration(self):
+        """Perform forced calibration of CO2 sensor"""
+        global calibration_in_progress
+        
+        print("Starting CO2 sensor calibration...")
+        
+        try:
+            if not self.use_hardware or not self.sensor:
+                print("Cannot calibrate: sensor not available")
+                return
+            
+            # Stop current measurements
+            self.sensor.stop_periodic_measurement()
+            time.sleep(0.1)
+            
+            # Set measurement interval to 2 seconds for calibration
+            print("Setting measurement interval to 2 seconds for calibration")
+            self.sensor.set_measurement_interval(2)
+            time.sleep(0.1)
+            
+            # Start measurements
+            self.sensor.start_periodic_measurement(0)
+            
+            # Wait 2 minutes for sensor to stabilize
+            print("Waiting 2 minutes for sensor stabilization...")
+            for i in range(120):
+                if shutdown_event.is_set():
+                    return
+                time.sleep(1)
+                if (i + 1) % 30 == 0:
+                    print(f"  {i + 1}/120 seconds elapsed...")
+            
+            # Perform forced calibration
+            print(f"Performing forced calibration to {CALIBRATION_REFERENCE_PPM} ppm...")
+            self.sensor.force_recalibration(CALIBRATION_REFERENCE_PPM)
+            time.sleep(0.5)
+            
+            print("Calibration complete!")
+            
+            # Restore normal measurement interval
+            self.sensor.stop_periodic_measurement()
+            time.sleep(0.1)
+            self.sensor.set_measurement_interval(CO2_MEASUREMENT_INTERVAL)
+            time.sleep(0.1)
+            self.sensor.start_periodic_measurement(0)
+            
+            # Skip next few readings
+            self.readings_to_skip = SENSOR_WARMUP_READINGS
+            
+        except Exception as e:
+            print(f"Error during calibration: {e}")
+        finally:
+            with calibration_lock:
+                calibration_in_progress = False
+            
+            # Notify display thread to update immediately and force full redraw
+            if hasattr(self.display_thread, 'display_condition'):
+                with self.display_thread.display_condition:
+                    self.display_thread.force_redraw = True
+                    self.display_thread.display_condition.notify()
+            
+            print("Resumed normal operation")
 
     def read_co2(self):
         # Try to initialize hardware sensor
         self.init_sensor()
         
         while not shutdown_event.is_set():
+            # Check if calibration is requested
+            if calibration_event.is_set():
+                self.perform_calibration()
+                calibration_event.clear()
+                continue
+                
             try:
                 if self.use_hardware:
                     # Read from real sensor - wait for sensor's measurement interval
@@ -642,6 +778,7 @@ class EInkDisplay(threading.Thread):
         self.display_condition = threading.Condition()
         self.new_measurement = False
         self.new_plot = False
+        self.force_redraw = False
 
     def init_display(self):
         """Initialize the e-ink display or set up simulation"""
@@ -698,6 +835,37 @@ class EInkDisplay(threading.Thread):
 
         try:
             while not shutdown_event.is_set():
+                # Check if calibration is in progress
+                with calibration_lock:
+                    is_calibrating = calibration_in_progress
+                
+                # Check if we need to force redraw after calibration
+                if self.force_redraw:
+                    if HAS_EINK_DISPLAY and self.epd:
+                        # Redraw all static elements
+                        self.draw.rectangle([(0, 70), (self.epd.height, self.epd.width)], fill=255)
+                        self.draw.text((110, 82), "x10", font=self.font15, fill=0)
+                        self.draw.text((134, 74), "-6", font=self.font12, fill=0)
+                        self.draw.text((110, 100), "CO", font=self.font15, fill=0)
+                        self.draw.text((130, 105), "2", font=self.font12, fill=0)
+                    self.force_redraw = False
+                    self.last_display = None  # Force update of dynamic content
+                
+                if is_calibrating:
+                    # Show calibration message
+                    if HAS_EINK_DISPLAY and self.epd:
+                        # Clear the display area
+                        self.draw.rectangle([(0, 70), (self.epd.height, self.epd.width)], fill=255)
+                        # Draw calibration message
+                        self.draw.text((10, 90), "Recalibration...", font=self.font24, fill=0)
+                        self.epd.displayPartial(self.epd.getbuffer(self.base_image))
+                    else:
+                        print("Display: Recalibration in progress...")
+                    
+                    # Wait and check again
+                    time.sleep(5)
+                    continue
+                
                 current_time = datetime.now().strftime("%H:%M")
                 current_date = datetime.now().strftime("%d.%m.%Y")
 
@@ -798,14 +966,17 @@ class EInkDisplay(threading.Thread):
 class WebServer(threading.Thread):
     """Thread to serve a simple web interface"""
 
-    def __init__(self, port):
+    def __init__(self, port, display_thread):
         super().__init__()
         self.port = port
         self.server = None
+        self.display_thread = display_thread
 
     def run(self):
         class RequestHandler(BaseHTTPRequestHandler):
             def do_GET(_self):
+                global calibration_in_progress
+                
                 # Parse URL and query parameters
                 parsed_url = urlparse(_self.path)
                 path = parsed_url.path
@@ -900,6 +1071,24 @@ class WebServer(threading.Thread):
                     _self.wfile.write(html.encode("utf-8"))
                     return
                 
+                # Handle calibration trigger
+                if path == '/calibrate':
+                    print("Web interface: Calibration triggered")
+                    with calibration_lock:
+                        calibration_in_progress = True
+                    calibration_event.set()
+                    
+                    # Notify display thread immediately
+                    if hasattr(self, 'display_thread') and hasattr(self.display_thread, 'display_condition'):
+                        with self.display_thread.display_condition:
+                            self.display_thread.display_condition.notify()
+                    
+                    # Redirect back to main page
+                    _self.send_response(302)
+                    _self.send_header("Location", "/")
+                    _self.end_headers()
+                    return
+                
                 # Serve main page
                 _self.send_response(200)
                 _self.send_header("Content-type", "text/html")
@@ -908,6 +1097,10 @@ class WebServer(threading.Thread):
                 # Get current measurements (thread-safe)
                 with measurement_lock:
                     current_measurements = measurements.copy()
+                
+                # Check calibration status
+                with calibration_lock:
+                    is_calibrating = calibration_in_progress
 
                 # Read the HTML template
                 template_path = os.path.join(
@@ -917,6 +1110,12 @@ class WebServer(threading.Thread):
                 try:
                     with open(template_path, "r") as f:
                         html = f.read()
+                    
+                    # Replace calibration status
+                    if is_calibrating:
+                        html = html.replace("{{CALIBRATION_STATUS}}", "<div style='background-color: #fff3cd; padding: 15px; margin: 20px 0; border: 1px solid #ffc107; border-radius: 4px;'><strong>⚠️ Recalibration in progress...</strong><br>Please wait approximately 2 minutes.</div>")
+                    else:
+                        html = html.replace("{{CALIBRATION_STATUS}}", "")
 
                     # Generate measurement rows
                     measurements_html = ""
@@ -953,16 +1152,20 @@ def main():
     # Create the display thread first so it can be referenced by CO2 sensor
     display_thread = EInkDisplay(daemon=True)
     co2_thread = CO2Sensor(display_thread, daemon=True)
-    web_thread = WebServer(WEB_SERVER_PORT)
+    web_thread = WebServer(WEB_SERVER_PORT, display_thread)
     plot_thread = PlotGenerator(display_thread, daemon=True)
+    calibration_button_thread = CalibrationButtonMonitor(display_thread, daemon=True)
 
     try:
         co2_thread.start()
         display_thread.start()
         web_thread.start()
         plot_thread.start()
+        calibration_button_thread.start()
 
         print("CO2 Monitor is running. Press Ctrl+C to exit.")
+        print(f"Hardware button: Hold button on GPIO {CALIBRATION_BUTTON_PIN} (pin 40) for 3 seconds to calibrate")
+        print(f"Web interface: Click 'Calibrate Sensor' button at http://localhost:{WEB_SERVER_PORT}")
 
         # Keep main thread alive
         while True:

@@ -41,6 +41,9 @@
     <h1>CO<sub>2</sub> mini meter</h1>
     
     <a href="/history" class="button">History</a>
+    <a href="/calibrate" class="button" style="background-color: #ff9800;" onclick="return confirm('Start CO2 sensor calibration? This will take about 2 minutes. Make sure the sensor is exposed to fresh outdoor air (427 ppm reference).');">Calibrate Sensor</a>
+    
+    {{CALIBRATION_STATUS}}
     
     <div class="plot-container">
         <h2>Last 12 Hours</h2>
