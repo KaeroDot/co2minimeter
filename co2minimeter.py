@@ -90,6 +90,7 @@ shutdown_event = threading.Event()
 calibration_event = threading.Event()
 calibration_in_progress = False
 calibration_lock = threading.Lock()
+sensor_warming_up = True  # True during warmup period (startup or after calibration)
 
 
 def save_to_csv(timestamp_str, co2_value, temperature, humidity):
@@ -636,7 +637,7 @@ class CO2Sensor(threading.Thread):
     
     def perform_calibration(self):
         """Perform forced calibration of CO2 sensor"""
-        global calibration_in_progress
+        global calibration_in_progress, sensor_warming_up
         
         print("Starting CO2 sensor calibration...")
         
@@ -682,6 +683,8 @@ class CO2Sensor(threading.Thread):
             
             # Skip next few readings
             self.readings_to_skip = SENSOR_WARMUP_READINGS
+            sensor_warming_up = True
+            print(f"Will skip next {SENSOR_WARMUP_READINGS} readings after calibration")
             
         except Exception as e:
             print(f"Error during calibration: {e}")
@@ -698,6 +701,8 @@ class CO2Sensor(threading.Thread):
             print("Resumed normal operation")
 
     def read_co2(self):
+        global sensor_warming_up
+        
         # Try to initialize hardware sensor
         self.init_sensor()
         
@@ -721,6 +726,11 @@ class CO2Sensor(threading.Thread):
                         self.readings_to_skip -= 1
                         print(f"Skipping initial reading {SENSOR_WARMUP_READINGS - self.readings_to_skip}/{SENSOR_WARMUP_READINGS}: {co2_value} ppm, {temperature:.1f}°C, {humidity:.1f}%")
                         continue
+                    
+                    # Clear warmup flag after first valid reading
+                    if sensor_warming_up:
+                        sensor_warming_up = False
+                        print("Sensor warmup complete - displaying measurements")
                 else:
                     # Simulate CO2 reading with randomized interval (50% to 150% of base interval)
                     co2_value = random.randint(400, 2000)
@@ -869,11 +879,14 @@ class EInkDisplay(threading.Thread):
                 current_time = datetime.now().strftime("%H:%M")
                 current_date = datetime.now().strftime("%d.%m.%Y")
 
-                # Get latest CO2 reading
+                # Get latest CO2 reading - show '---' if sensor is warming up
                 with measurement_lock:
-                    latest_reading = (
-                        "N/A" if not measurements else f"{measurements[-1][1]}"
-                    )
+                    if sensor_warming_up:
+                        latest_reading = "---"
+                    elif not measurements:
+                        latest_reading = "N/A"
+                    else:
+                        latest_reading = f"{measurements[-1][1]}"
 
                 display_text = f""" Time: {current_time}, Date: {current_date}, CO2: {latest_reading} """
 
@@ -975,7 +988,7 @@ class WebServer(threading.Thread):
     def run(self):
         class RequestHandler(BaseHTTPRequestHandler):
             def do_GET(_self):
-                global calibration_in_progress
+                global calibration_in_progress, sensor_warming_up
                 
                 # Parse URL and query parameters
                 parsed_url = urlparse(_self.path)
