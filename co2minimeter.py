@@ -82,6 +82,7 @@ DATA_DIR = os.path.join(os.path.dirname(os.path.realpath(__file__)), "data")
 FONT_DIR = os.path.join(os.path.dirname(os.path.realpath(__file__)), "fonts")
 CALIBRATION_BUTTON_PIN = 21  # GPIO 21 (physical pin 40)
 CALIBRATION_REFERENCE_PPM = 427  # Reference CO2 level for forced calibration
+DISPLAY_UPSIDE_DOWN = True  # Set to True to rotate display 180 degrees
 
 # Global variables
 measurements = []
@@ -816,8 +817,12 @@ class EInkDisplay(threading.Thread):
             self.base_image = Image.new("1", (self.epd.height, self.epd.width), 255)
             self.draw = ImageDraw.Draw(self.base_image)
 
-            # Display base image
-            self.epd.displayPartBaseImage(self.epd.getbuffer(self.base_image))
+            # Display base image (rotate if needed)
+            if DISPLAY_UPSIDE_DOWN:
+                rotated = self.base_image.rotate(180)
+                self.epd.displayPartBaseImage(self.epd.getbuffer(rotated))
+            else:
+                self.epd.displayPartBaseImage(self.epd.getbuffer(self.base_image))
 
             # Draw static elements on base image
             self.draw.rectangle([(0, 0), (self.epd.height, self.epd.width)], fill=255)
@@ -868,7 +873,11 @@ class EInkDisplay(threading.Thread):
                         self.draw.rectangle([(0, 70), (self.epd.height, self.epd.width)], fill=255)
                         # Draw calibration message
                         self.draw.text((10, 90), "Recalibration...", font=self.font24, fill=0)
-                        self.epd.displayPartial(self.epd.getbuffer(self.base_image))
+                        if DISPLAY_UPSIDE_DOWN:
+                            rotated = self.base_image.rotate(180)
+                            self.epd.displayPartial(self.epd.getbuffer(rotated))
+                        else:
+                            self.epd.displayPartial(self.epd.getbuffer(self.base_image))
                     else:
                         print("Display: Recalibration in progress...")
                     
@@ -937,8 +946,12 @@ class EInkDisplay(threading.Thread):
                             (160, 100), current_date, font=self.font15, fill=0
                         )
 
-                        # Update only the changed part of the display
-                        self.epd.displayPartial(self.epd.getbuffer(self.base_image))
+                        # Update only the changed part of the display (rotate if needed)
+                        if DISPLAY_UPSIDE_DOWN:
+                            rotated = self.base_image.rotate(180)
+                            self.epd.displayPartial(self.epd.getbuffer(rotated))
+                        else:
+                            self.epd.displayPartial(self.epd.getbuffer(self.base_image))
                     else:
                         # Print to console in simulation mode
                         print(display_text)
