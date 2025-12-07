@@ -1,15 +1,15 @@
 # CO<sub>2</sub> Mini Meter
 
-A Raspberry Pi-based CO<sub>2</sub> concentration monitoring device with e-ink display and web interface for tracking indoor air quality.
+A Raspberry Pi-based CO<sub>2</sub> concentration monitoring device with e-ink display and web interface for tracking indoor air quality. 
 
-## 1. Device Photo
+99.9 % of the code was developed by AI Claude Sonnet 4.5. The system *is* working and used everyday in my home.
 
 ![CO<sub>2</sub> Mini Meter Device](device_photo.jpg)
 *Photo: CO<sub>2</sub> Mini Meter showing real-time measurements on e-ink display*
 
 ## 2. Overview
 
-The CO<sub>2</sub> Mini Meter is a compact, air quality monitoring system designed to measure and display carbon dioxide levels, temperature, and humidity in indoor environments. The device features an easily readable e-ink display showing current CO<sub>2</sub> readings and a trend graph with last 12 hours, along with a web interface accessible from any device on your local network.
+The CO<sub>2</sub> Mini Meter is a compact, air quality monitoring system designed to measure and display carbon dioxide levels, temperature, and humidity in indoor environments. The device features an easily readable e-ink display showing current CO<sub>2</sub> readings and a trend graph with last 12 hours, along with a web interface accessible from any device on your local network. Web interface can plot also historical values stored to a disk. Sensor calibration is manually triggered.
 
 ## 3. Hardware Components
 
@@ -17,16 +17,16 @@ The device consists of the following hardware components:
 
 - **Raspberry Pi** (any model with I2C and GPIO support)
 - **Sensirion SCD30** CO<sub>2</sub> sensor module
-  - Measures CO<sub>2</sub> concentration (400-10,000 ppm)
+  - Measures CO<sub>2</sub> concentration
   - Built-in temperature sensor
   - Built-in humidity sensor
-  - I2C interface (address 0x61)
-- **Waveshare 2.13" e-Paper Display V4** (250x122 pixels)
-  - Low power consumption
+  - I2C interface
+- **Waveshare 2.13" e-Paper Display V4**
   - Black and white display
   - SPI interface via GPIO
   - size of Raspberry Pi Zero/Zero W
 - **Power supply** for Raspberry Pi
+- **Calibration button** for manually initiate sensor recalibration. Not needed, the same can be done using device webpage.
 
 ### 3.1. Connections
 
@@ -36,14 +36,11 @@ The device consists of the following hardware components:
 
 ## 4. Software Features
 
-The CO<sub>2</sub> Mini Meter software provides comprehensive monitoring and data logging capabilities:
-
 ### 4.1. Real-time Monitoring
 
 - **Continuous Measurements**: Reads CO<sub>2</sub>, temperature, and humidity every 60 seconds
 - **Sensor Warmup**: Automatically skips the first 2 readings after startup for sensor stabilization
-  - Display shows "---" during warmup period instead of stale values
-  - Also applies after sensor calibration
+  - Display shows "---" during warmup period or after sensor calibration instead of stale values
 - **E-ink Display**:
   - Shows current CO<sub>2</sub> level in large digits
   - Displays current date and time
@@ -58,7 +55,7 @@ The CO<sub>2</sub> Mini Meter software provides comprehensive monitoring and dat
   data/data_YYYY-MM-DD.csv
   ```
 
-- **Data Fields**: Timestamp, CO<sub>2</sub> (×10⁻⁶), Temperature (°C), Humidity (%)
+- **Data Fields**: Timestamp, CO<sub>2</sub> (×10⁶), Temperature (°C), Humidity (%)
 - **Automatic Cleanup**: Maintains rolling 12-hour history in memory
 - **Persistent Storage**: All historical data remains available in CSV files for long-term analysis
 
@@ -68,16 +65,16 @@ The CO<sub>2</sub> Mini Meter software provides comprehensive monitoring and dat
 - **Auto-refresh**: Main page updates every 10 seconds
 - **Interactive Plots**:
   - SVG plot showing 12-hour trends for all three parameters
-  - CO<sub>2</sub> (green line, left axis) - auto-scaled from 400 ppm to maximum value in data
+  - CO<sub>2</sub> (green line, left axis) - auto-scaled from 400×10⁻⁶ to maximum value in data
   - Temperature (red line, right axis) - auto-scaled
   - Humidity (blue line, right axis, offset) - auto-scaled
   - Gap detection: Shows breaks in data when measurements are interrupted (e.g. restart of the device)
-  - Date format: Always includes year (YYYY-MM-DD) to avoid confusion
+  - Date format: YYYY-MM-DD
 - **Measurement Table**: Complete list of all measurements in the current 12-hour window with timestamp, CO<sub>2</sub>, temperature, and humidity
 - **History Page**: 
   - Access via "History" button on main page
   - View historical data from CSV files
-  - Shows available data range
+  - Shows available time range of historical data
   - Manual date/time selection with datetime pickers
   - Quick select buttons: "Yesterday", "Last 24 hours", "Last 48 hours", "Last 7 days", "Last 30 days"
   - Dynamic plot generation based on selected time range
@@ -85,7 +82,7 @@ The CO<sub>2</sub> Mini Meter software provides comprehensive monitoring and dat
   - All three parameters displayed with auto-scaled axes
 - **Sensor Calibration**:
   - "Calibrate Sensor" button on main page
-  - Initiates forced calibration to 427 ppm (fresh outdoor air reference)
+  - Initiates forced calibration to 427×10⁻⁶ (fresh outdoor air reference for year 2025)
   - Shows calibration progress with warning banner
   - Requires 2-minute stabilization period during calibration
 
@@ -93,15 +90,15 @@ The CO<sub>2</sub> Mini Meter software provides comprehensive monitoring and dat
 
 The SCD30 sensor can be calibrated to maintain accuracy over time:
 
-- **Automatic Self-Calibration**: Disabled by default for more precise control
+- **Automatic Self-Calibration**: Disabled by default
 - **Manual Forced Calibration**: Two methods available:
   1. **Hardware Button**: Hold button on GPIO 21 (pin 40) for 3 seconds
   2. **Web Interface**: Click "Calibrate Sensor" button on main page
 - **Calibration Process**:
-  - Device must be placed in fresh outdoor air (≈427 ppm CO<sub>2</sub>)
+  - Device must be placed in fresh outdoor air (≈427×10⁻⁶ CO<sub>2</sub>)
   - Sensor stops normal measurements
   - 2-minute stabilization period
-  - Forced calibration to 427 ppm reference value
+  - Forced calibration to 427×10⁻⁶ reference value
   - Resumes normal operation with 2-reading warmup
 - **Visual Feedback**:
   - E-ink display shows "Recalibration..." message
