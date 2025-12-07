@@ -32,6 +32,7 @@ The device consists of the following hardware components:
 
 - **SCD30 Sensor**: Connected via I2C (default `/dev/i2c-1`)
 - **E-ink Display**: Connected via SPI/GPIO using Waveshare e-Paper HAT
+- **Calibration Button** (optional): Push button connected to GPIO 21 (pin 40) and GND for sensor calibration
 
 ## 4. Software Features
 
@@ -41,10 +42,13 @@ The CO<sub>2</sub> Mini Meter software provides comprehensive monitoring and dat
 
 - **Continuous Measurements**: Reads CO<sub>2</sub>, temperature, and humidity every 60 seconds
 - **Sensor Warmup**: Automatically skips the first 2 readings after startup for sensor stabilization
+  - Display shows "---" during warmup period instead of stale values
+  - Also applies after sensor calibration
 - **E-ink Display**:
   - Shows current CO<sub>2</sub> level in large digits
   - Displays current date and time
   - Shows a 12-hour trend graph (245×70 pixels) updated every 15 minutes
+  - Configurable display orientation (normal or upside down)
 
 ### 4.2. Data Logging
 
@@ -79,23 +83,48 @@ The CO<sub>2</sub> Mini Meter software provides comprehensive monitoring and dat
   - Dynamic plot generation based on selected time range
   - Adaptive time axis formatting (hourly for <24h, 6-hourly for <7 days, daily for longer periods)
   - All three parameters displayed with auto-scaled axes
+- **Sensor Calibration**:
+  - "Calibrate Sensor" button on main page
+  - Initiates forced calibration to 427 ppm (fresh outdoor air reference)
+  - Shows calibration progress with warning banner
+  - Requires 2-minute stabilization period during calibration
 
-### 4.4. System Integration
+### 4.4. Sensor Calibration
+
+The SCD30 sensor can be calibrated to maintain accuracy over time:
+
+- **Automatic Self-Calibration**: Disabled by default for more precise control
+- **Manual Forced Calibration**: Two methods available:
+  1. **Hardware Button**: Hold button on GPIO 21 (pin 40) for 3 seconds
+  2. **Web Interface**: Click "Calibrate Sensor" button on main page
+- **Calibration Process**:
+  - Device must be placed in fresh outdoor air (≈427 ppm CO<sub>2</sub>)
+  - Sensor stops normal measurements
+  - 2-minute stabilization period
+  - Forced calibration to 427 ppm reference value
+  - Resumes normal operation with 2-reading warmup
+- **Visual Feedback**:
+  - E-ink display shows "Recalibration..." message
+  - Web interface shows warning banner with progress
+  - Both update immediately when calibration is triggered
+
+### 4.5. System Integration
 
 - **Systemd Service**: Automatically starts on boot
 - **mDNS/Avahi**: Device discoverable on network as `co2minimeter.local`
 - **Fallback Mode**: For testing - runs with simulated data if sensor or display unavailable
 
-### 4.5. Multi-threaded Architecture
+### 4.6. Multi-threaded Architecture
 
-The software uses four independent threads for optimal performance:
+The software uses five independent threads for optimal performance:
 
 1. **CO<sub>2</sub> Sensor Thread**: Handles sensor communication and data collection
 2. **E-ink Display Thread**: Updates the display based on measurement changes
 3. **Plot Generator Thread**: Creates SVG and PNG plots every 15 minutes
 4. **Web Server Thread**: Serves the web interface on port 8080
+5. **Calibration Button Monitor Thread**: Monitors GPIO 21 for 3-second button press
 
-### 4.6. Configuration
+### 4.7. Configuration
 
 Key configuration constants (defined in `co2minimeter.py`):
 
@@ -104,6 +133,9 @@ Key configuration constants (defined in `co2minimeter.py`):
 - `PLOT_UPDATE_INTERVAL = 900` - Plot update interval (15 minutes)
 - `WEB_SERVER_PORT = 8080` - Web server port
 - `HOURS_TO_KEEP = 12` - Rolling history window
+- `CALIBRATION_BUTTON_PIN = 21` - GPIO pin for calibration button (pin 40)
+- `CALIBRATION_REFERENCE_PPM = 427` - Reference CO<sub>2</sub> level for calibration
+- `DISPLAY_UPSIDE_DOWN = False` - Set to `True` to rotate e-ink display 180°
 
 ## 5. Installation
 
@@ -189,6 +221,7 @@ co2minimeter/
 ### 8.2. Python Packages
 
 - `sensirion-i2c-scd30` - SCD30 sensor driver
+- `gpiozero` - GPIO interface for calibration button (system package)
 - `matplotlib` - Plotting (system package)
 - `Pillow` - Image manipulation (system package)
 
@@ -218,13 +251,18 @@ co2minimeter/
 - Verify permissions: `ls -la co2minimeter.py`
 - Review logs: `sudo journalctl -u co2minimeter.service -n 50`
 
+### 9.5. Calibration issues
+
+- Ensure device is in fresh outdoor air (not indoors) before calibrating
+- Wait full 2 minutes for stabilization
+- Check GPIO 21 connection if using hardware button
+- Verify button is connected between GPIO 21 (pin 40) and GND
+- Check logs for calibration messages: `sudo journalctl -u co2minimeter.service -f`
+
 ## 10. License
 
 This project uses the MIT license. The Waveshare e-Paper library got its own license, see `e-Paper/` directory. The font DejaVu Sans Mono use its own license, see `font/` directory.
 
 ## 11. 2DO
-Things that has to be added or fixed:
-1. mDNS is not reliable
-2. webpage shows zero for temperature and humidity after restart
-3. button for selfcalibration
-4. plotting of historical values
+Things that might need improvement:
+1. mDNS reliability could be improved in some network environments
