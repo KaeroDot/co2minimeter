@@ -34,6 +34,9 @@ The device consists of the following hardware components:
 - **E-ink Display**: Connected via SPI/GPIO using Waveshare e-Paper HAT
 - **Calibration Button** (optional): Push button connected to GPIO 21 (pin 40) and GND for sensor calibration
 
+![Wiring Diagram](wiring_image/wiring.png)
+*Wiring diagram showing connections between Raspberry Pi, e-Paper display, SCD30 sensor, and calibration button*
+
 ## 4. Software Features
 
 ### 4.1. Real-time Monitoring
