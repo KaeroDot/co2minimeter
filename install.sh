@@ -40,7 +40,7 @@ fi
 sudo tee "$AVAHI_CONF" > /dev/null << 'EOF'
 [server]
 use-ipv4=yes
-use-ipv6=yes
+use-ipv6=no
 allow-interfaces=wlan0,eth0
 deny-interfaces=lo
 enable-dbus=yes
@@ -52,6 +52,8 @@ publish-addresses=yes
 publish-hinfo=yes
 publish-workstation=yes
 publish-domain=yes
+publish-aaaa-on-ipv4=no
+publish-a-on-ipv6=no
 
 [wide-area]
 enable-wide-area=yes

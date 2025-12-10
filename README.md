@@ -150,7 +150,7 @@ chmod +x install.sh
 The installer will:
 
 - Install required system packages (Python, matplotlib, Pillow, Avahi)
-- Configure mDNS for network discovery
+- Configure mDNS for network discovery (IPv6 disabled to ensure reliable IPv4 resolution)
 - Create Python virtual environment
 - Install SCD30 sensor driver
 - Set up systemd service for auto-start
@@ -238,12 +238,55 @@ co2minimeter/
 - Check GPIO connections
 - Verify e-Paper library installation
 - Check logs: `sudo journalctl -u co2minimeter.service`
+- Update of CO<sub>2</sub> value is slow, and first 2 readings are discarded.
 
 ### 9.3. Web interface not accessible
 
 - Check service status: `sudo systemctl status co2minimeter.service`
 - Test mDNS: `avahi-resolve -n co2minimeter.local`
 - Try IP address instead of hostname
+- **Note:** IPv6 is disabled in Avahi configuration (`/etc/avahi/avahi-daemon.conf`) to prevent IPv4/IPv6 resolution conflicts. The device uses IPv4-only for mDNS.
+- **Client-side mDNS configuration** (if `.local` domain doesn't resolve):
+  
+  On your client computer (Ubuntu/Debian), ensure mDNS is properly configured:
+  
+  1. **Install libnss-mdns:**
+     ```bash
+     sudo apt-get install libnss-mdns
+     ```
+  
+  2. **Configure NSS** - Edit `/etc/nsswitch.conf`:
+     ```bash
+     sudo nano /etc/nsswitch.conf
+     ```
+     
+     Find the `hosts:` line and ensure it includes mdns resolution:
+     ```
+     hosts:          files mdns4_minimal [NOTFOUND=return] resolve [!UNAVAIL=return] dns mdns4
+     ```
+  
+  3. **Enable mDNS in systemd-resolved** - Edit `/etc/systemd/resolved.conf`:
+     ```bash
+     sudo nano /etc/systemd/resolved.conf
+     ```
+     
+     Uncomment and set:
+     ```ini
+     [Resolve]
+     MulticastDNS=yes
+     LLMNR=yes
+     ```
+     
+     Then restart the service:
+     ```bash
+     sudo systemctl restart systemd-resolved
+     ```
+  
+  4. **Verify mDNS is working:**
+     ```bash
+     avahi-resolve -n co2minimeter.local
+     ping co2minimeter.local
+     ```
 
 ### 9.4. Service won't start
 
@@ -265,4 +308,4 @@ This project uses the MIT license. The Waveshare e-Paper library got its own lic
 
 ## 11. 2DO
 Things that might need improvement:
-1. mDNS reliability could be improved in some network environments
+1. speed up loading of the csv files
