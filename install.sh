@@ -20,6 +20,17 @@ PYTHON_VERSION=$(python3 --version)
 echo "Found: $PYTHON_VERSION"
 echo ""
 
+# Initialize and update git submodules
+echo "Initializing git submodules (e-Paper and python-i2c-scd30)..."
+if [ -d ".git" ]; then
+    git submodule update --init --recursive
+    echo "✓ Git submodules initialized"
+else
+    echo "Warning: Not a git repository. Submodules not initialized."
+    echo "Make sure e-Paper and python-i2c-scd30 directories are present."
+fi
+
+echo ""
 # Install system packages
 echo "Installing system packages (requires sudo)..."
 echo "This will install: python3-venv, python3-matplotlib, python3-pil, python3-gpiozero, avahi-daemon, avahi-utils"
