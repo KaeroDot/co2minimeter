@@ -1,0 +1,6 @@
+[submodule "e-Paper"]
+	path = e-Paper
+	url = https://github.com/waveshare/e-Paper.git
+[submodule "python-i2c-scd30"]
+	path = python-i2c-scd30
+	url = https://github.com/Sensirion/python-i2c-scd30.git
