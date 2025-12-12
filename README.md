@@ -151,6 +151,7 @@ The installer will:
 
 - Install required system packages (Python, matplotlib, Pillow, Avahi)
 - Configure mDNS for network discovery (IPv6 disabled to ensure reliable IPv4 resolution)
+- Set up cron job to keep mDNS announcements active (workaround for Avahi announcement expiration issues)
 - Create Python virtual environment
 - Install SCD30 sensor driver
 - Set up systemd service for auto-start
@@ -246,6 +247,7 @@ co2minimeter/
 - Test mDNS: `avahi-resolve -n co2minimeter.local`
 - Try IP address instead of hostname
 - **Note:** IPv6 is disabled in Avahi configuration (`/etc/avahi/avahi-daemon.conf`) to prevent IPv4/IPv6 resolution conflicts. The device uses IPv4-only for mDNS.
+- **Note:** A cron job runs every minute to refresh mDNS announcements (`avahi-resolve -n co2minimeter.local`). This works around an issue where Avahi announcements may expire on some networks. You can verify the cron job with `crontab -l` on the co2minimeter device.
 - **Client-side mDNS configuration** (if `.local` domain doesn't resolve):
   
   On your client computer (Ubuntu/Debian), ensure mDNS is properly configured:

@@ -78,6 +78,20 @@ else
     echo "✗ Warning: Avahi daemon failed to start"
 fi
 
+# Add cron job to keep mDNS announcements active
+echo ""
+echo "Setting up cron job to maintain mDNS announcements..."
+CRON_ENTRY="* * * * * avahi-resolve -n $(hostname).local > /dev/null 2>&1"
+
+# Check if cron entry already exists
+if crontab -l 2>/dev/null | grep -q "avahi-resolve -n $(hostname).local"; then
+    echo "Cron job already exists"
+else
+    # Add cron entry
+    (crontab -l 2>/dev/null; echo "$CRON_ENTRY") | crontab -
+    echo "✓ Cron job added to run every minute (keeps mDNS active)"
+fi
+
 echo ""
 echo "Verifying system packages..."
 python3 -c "import matplotlib; print(f'matplotlib {matplotlib.__version__} installed')"
