@@ -1,15 +1,29 @@
 # CO<sub>2</sub> Mini Meter
 
-A Raspberry Pi-based CO<sub>2</sub> concentration monitoring device with e-ink display and web interface for tracking indoor air quality. 
+A Raspberry Pi-based CO<sub>2</sub> concentration monitoring device with e-ink display and web interface for tracking indoor air quality.
+99.9 % of the code was developed by AI Claude Sonnet 4.5 to test AI abilities. The system **is working** and used everyday in my home.
 
-99.9 % of the code was developed by AI Claude Sonnet 4.5. The system *is* working and used everyday in my home.
+Photo of CO<sub>2</sub> Mini Meter showing real measurements on e-ink display:
+![CO<sub>2</sub> Mini Meter Device](photos_and_plot_example_images/co2minimeter.webp)
 
-![CO<sub>2</sub> Mini Meter Device](device_photo.jpg)
-*Photo: CO<sub>2</sub> Mini Meter showing real-time measurements on e-ink display*
+Photo of CO<sub>2</sub> Mini Meter in a LEGO case made:
+![CO<sub>2</sub> Mini Meter Device in LEGO case](photos_and_plot_example_images/co2minimeter_lego_case.webp)
 
 ## 2. Overview
 
 The CO<sub>2</sub> Mini Meter is a compact, air quality monitoring system designed to measure and display carbon dioxide levels, temperature, and humidity in indoor environments. The device features an easily readable e-ink display showing current CO<sub>2</sub> readings and a trend graph with last 12 hours, along with a web interface accessible from any device on your local network. Web interface can plot also historical values stored to a disk. Sensor calibration is manually triggered.
+
+Last 12 hours of CO<sub>2</sub> concentration is shown on e-ink display. Every section between vertical lines represents one hour. The data on the following image shows real measurement with gradual decrease of CO<sub>2</sub> concentration during a night (because the room was empty), followed by increase during morning hours when people arrived to the room, and followed by sudden decrease during ventilation:
+
+![CO2 display image](photos_and_plot_example_images/data_latest_plot_eink.png)
+
+The same data is shown on webpage, and also with temperature and humidity:
+
+![CO2 webpage image](photos_and_plot_example_images/data_latest_plot.png)
+
+The webpage also gives possibility to see historical data, e.g. last 48 hours:
+
+![CO2 historical webpage image](photos_and_plot_example_images/history_plot.png)
 
 ## 3. Hardware Components
 
@@ -74,7 +88,7 @@ The device consists of the following hardware components:
   - Gap detection: Shows breaks in data when measurements are interrupted (e.g. restart of the device)
   - Date format: YYYY-MM-DD
 - **Measurement Table**: Complete list of all measurements in the current 12-hour window with timestamp, CO<sub>2</sub>, temperature, and humidity
-- **History Page**: 
+- **History Page**:
   - Access via "History" button on main page
   - View historical data from CSV files
   - Shows available time range of historical data
@@ -253,38 +267,45 @@ co2minimeter/
   On your client computer (Ubuntu/Debian), ensure mDNS is properly configured:
   
   1. **Install libnss-mdns:**
+
      ```bash
      sudo apt-get install libnss-mdns
      ```
   
   2. **Configure NSS** - Edit `/etc/nsswitch.conf`:
+
      ```bash
      sudo nano /etc/nsswitch.conf
      ```
-     
+
      Find the `hosts:` line and ensure it includes mdns resolution:
+
      ```
      hosts:          files mdns4_minimal [NOTFOUND=return] resolve [!UNAVAIL=return] dns mdns4
      ```
   
   3. **Enable mDNS in systemd-resolved** - Edit `/etc/systemd/resolved.conf`:
+
      ```bash
      sudo nano /etc/systemd/resolved.conf
      ```
-     
+
      Uncomment and set:
+
      ```ini
      [Resolve]
      MulticastDNS=yes
      LLMNR=yes
      ```
-     
+
      Then restart the service:
+
      ```bash
      sudo systemctl restart systemd-resolved
      ```
   
   4. **Verify mDNS is working:**
+
      ```bash
      avahi-resolve -n co2minimeter.local
      ping co2minimeter.local
@@ -309,5 +330,8 @@ co2minimeter/
 This project uses the MIT license. The Waveshare e-Paper library got its own license, see `e-Paper/` directory. The font DejaVu Sans Mono use its own license, see `font/` directory.
 
 ## 11. 2DO
+
 Things that might need improvement:
+
 1. speed up loading of the csv files
+
