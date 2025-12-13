@@ -335,3 +335,12 @@ Things that might need improvement:
 
 1. speed up loading of the csv files
 
+## 12. Why? Motivation? Drivers?
+
+Why yet another CO<sub>2</sub> meter project? Because I wanted something
+running full Linux, that is easy for me to setup, and is fast enough to plot
+historical data. Also I wanted an e-ink display due to readability. I have
+found many Arduino and ESP32 based projects, but not one that fulfilled my
+requirements. Also I could have bought a commercial meter at the price of
+Raspberry Pi Zero + e-ink display + SCD30 sensor, but these simple devices
+cannot record historical data. The ones recording data are much more expensive.
