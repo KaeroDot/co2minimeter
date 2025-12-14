@@ -63,6 +63,7 @@ The device consists of the following hardware components:
   - Displays current date and time
   - Shows a 12-hour trend graph (245×70 pixels) updated every 15 minutes
   - Configurable display orientation (normal or upside down)
+  - **Note**: After startup, wait ~15 minutes for the first plot to be generated
 
 ### 4.2. Data Logging
 
@@ -87,6 +88,7 @@ The device consists of the following hardware components:
   - Humidity (blue line, right axis, offset) - auto-scaled
   - Gap detection: Shows breaks in data when measurements are interrupted (e.g. restart of the device)
   - Date format: YYYY-MM-DD
+  - **Note**: Plots are generated every 15 minutes. After device startup, wait ~15 minutes for the first plot to appear
 - **Measurement Table**: Complete list of all measurements in the current 12-hour window with timestamp, CO<sub>2</sub>, temperature, and humidity
 - **History Page**:
   - Access via "History" button on main page
@@ -140,7 +142,7 @@ The software uses five independent threads for optimal performance:
 
 1. **CO<sub>2</sub> Sensor Thread**: Handles sensor communication and data collection
 2. **E-ink Display Thread**: Updates the display based on measurement changes
-3. **Plot Generator Thread**: Creates SVG and PNG plots every 15 minutes
+3. **Plot Generator Thread**: Creates SVG and PNG plots every 15 minutes (initial plots generated ~15 minutes after startup)
 4. **Web Server Thread**: Serves the web interface on port 8080
 5. **Calibration Button Monitor Thread**: Monitors GPIO 21 for 3-second button press
 
