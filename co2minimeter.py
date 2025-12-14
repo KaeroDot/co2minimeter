@@ -1,5 +1,29 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""CO2 Minimeter - Indoor Air Quality Monitor
+
+A multi-threaded application for monitoring CO2, temperature, and humidity
+using a Sensirion SCD30 sensor, displaying data on a Waveshare e-ink screen,
+and serving a web interface with interactive historical data visualization.
+
+Key Features:
+    - Real-time CO2/temperature/humidity monitoring (60-second intervals)
+    - E-ink display with 12-hour trend graph (updated every 15 minutes)
+    - Web interface with auto-refresh and interactive plots
+    - Historical data CSV logging with persistent storage
+    - Manual sensor calibration (hardware button or web interface)
+    - Multi-threaded architecture for optimal performance
+
+Threads:
+    1. CO2Sensor: Reads sensor data and handles calibration
+    2. EInkDisplay: Updates e-ink display with current values and plots
+    3. PlotGenerator: Creates SVG and PNG plots every 15 minutes
+    4. WebServer: Serves web interface on port 8080
+    5. CalibrationButtonMonitor: Monitors GPIO button for calibration trigger
+
+Author: Developed by Claude Sonnet 4.5 AI
+License: MIT
+"""
 
 import sys
 import os
@@ -95,7 +119,21 @@ sensor_warming_up = True  # True during warmup period (startup or after calibrat
 
 
 def save_to_csv(timestamp_str, co2_value, temperature, humidity):
-    """Save measurement to daily CSV file"""
+    """Save measurement to daily CSV file.
+    
+    Creates a new CSV file for each day with format: data_YYYY-MM-DD.csv
+    Writes header row if file is newly created.
+    
+    Args:
+        timestamp_str: Timestamp in format "YYYY-MM-DD HH:MM:SS"
+        co2_value: CO2 concentration in ppm (parts per million)
+        temperature: Temperature in degrees Celsius
+        humidity: Relative humidity as percentage
+    
+    Note:
+        Creates data directory if it doesn't exist.
+        Appends to existing file or creates new one for each day.
+    """
     try:
         # Create data directory if it doesn't exist
         os.makedirs(DATA_DIR, exist_ok=True)
@@ -123,7 +161,18 @@ def save_to_csv(timestamp_str, co2_value, temperature, humidity):
 
 
 def load_recent_measurements():
-    """Load measurements from the last 12 hours from CSV files"""
+    """Load measurements from the last 12 hours from CSV files.
+    
+    Reads CSV files from today and yesterday to gather all measurements
+    within the configured HOURS_TO_KEEP window.
+    
+    Returns:
+        list: List of tuples (timestamp_str, co2_value, temperature, humidity)
+              sorted by timestamp, containing only measurements from last 12 hours.
+    
+    Note:
+        Used during application startup to restore recent history.
+    """
     loaded_measurements = []
     
     try:
@@ -175,7 +224,15 @@ def load_recent_measurements():
 
 
 def cleanup_old_measurements():
-    """Remove measurements older than HOURS_TO_KEEP hours from the measurements array"""
+    """Remove measurements older than HOURS_TO_KEEP hours from memory.
+    
+    Filters the global measurements array to keep only recent data within
+    the configured rolling window. CSV files are not affected.
+    
+    Note:
+        Called after each new measurement to maintain memory footprint.
+        Thread-safe: Uses measurement_lock.
+    """
     global measurements
     
     try:
@@ -193,7 +250,24 @@ def cleanup_old_measurements():
 
 
 def generate_plot():
-    """Generate SVG and bitmap plot of last 12 hours of CO2 measurements"""
+    """Generate SVG and PNG plots of last 12 hours of measurements.
+    
+    Creates two plot files:
+        - data_latest_plot.svg (1000x300px): Full-featured plot with grid,
+          all three parameters (CO2, temperature, humidity), auto-scaled axes
+        - data_latest_plot.png (245x70px): Simplified plot for e-ink display,
+          CO2 only, black and white
+    
+    Features:
+        - Gap detection: Inserts NaN values for gaps > 5 minutes
+        - Auto-scaled CO2 axis: 400 ppm minimum, rounded to nearest 500
+        - Three separate y-axes for different parameters
+        - Hourly time markers on x-axis
+    
+    Note:
+        Output files saved to data/ directory.
+        Thread-safe: Makes copy of measurements under lock.
+    """
     try:
         with measurement_lock:
             data = measurements.copy()
@@ -305,7 +379,22 @@ def generate_plot():
 
 
 def load_historical_data(start_time, end_time):
-    """Load measurements from CSV files within specified time range"""
+    """Load measurements from CSV files within specified time range.
+    
+    Reads all CSV files covering the date range and filters measurements
+    by timestamp.
+    
+    Args:
+        start_time: datetime object for range start (inclusive)
+        end_time: datetime object for range end (inclusive)
+    
+    Returns:
+        list: List of tuples (timestamp_str, co2_value, temperature, humidity)
+              sorted by timestamp, containing only measurements in range.
+    
+    Note:
+        Used by history plot generation in web interface.
+    """
     historical_data = []
     
     try:
@@ -349,7 +438,18 @@ def load_historical_data(start_time, end_time):
 
 
 def get_data_range():
-    """Get the available data range from CSV files"""
+    """Get the available data range from CSV files.
+    
+    Scans data directory for CSV files and extracts first and last
+    timestamps from the files.
+    
+    Returns:
+        tuple: (first_timestamp, last_timestamp) as datetime objects,
+               or (None, None) if no data files exist.
+    
+    Note:
+        Used by history page to display available data range.
+    """
     try:
         if not os.path.exists(DATA_DIR):
             return None, None
@@ -401,7 +501,25 @@ def get_data_range():
 
 
 def generate_history_plot(start_time, end_time):
-    """Generate SVG plot for historical data within specified time range"""
+    """Generate SVG plot for historical data within specified time range.
+    
+    Creates history_plot.svg with adaptive time formatting based on range:
+        - Hourly labels for < 24 hours
+        - 6-hourly labels for < 7 days
+        - Daily labels for longer periods
+    
+    Args:
+        start_time: datetime object for range start
+        end_time: datetime object for range end
+    
+    Features:
+        - Gap detection for measurement interruptions
+        - Auto-scaled axes for all three parameters
+        - Three separate y-axes with color coding
+    
+    Note:
+        Output file: data/history_plot.svg
+    """
     try:
         data = load_historical_data(start_time, end_time)
         
@@ -497,14 +615,54 @@ def generate_history_plot(start_time, end_time):
 
 
 class CalibrationButtonMonitor(threading.Thread):
-    """Thread to monitor calibration button (GPIO 21, pin 40)"""
+    """Thread to monitor physical calibration button on GPIO 21.
+    
+    Monitors a hardware button connected to GPIO 21 (physical pin 40) and
+    triggers sensor calibration when held for 3 seconds.
+    
+    Attributes:
+        button: gpiozero.Button instance or None if GPIO not available
+        display_thread: Reference to EInkDisplay thread for immediate feedback
+    
+    Button Wiring:
+        - GPIO 21 (pin 40) with internal pull-up resistor enabled
+        - Button connects GPIO 21 to GND when pressed
+    
+    Behavior:
+        - Detects 3-second press and sets calibration_event
+        - Notifies display thread to show "Recalibration..." message
+        - Waits for button release before returning to monitoring
+    
+    Note:
+        Disabled if GPIO library not available (falls back to web-only calibration).
+    """
     
     def __init__(self, display_thread, daemon=None):
+        """Initialize calibration button monitor.
+        
+        Args:
+            display_thread: Reference to EInkDisplay thread for notifications
+            daemon: Whether to run as daemon thread (default None)
+        """
         super().__init__(daemon=daemon)
         self.button = None
         self.display_thread = display_thread
         
     def run(self):
+        """Main loop monitoring button presses for calibration trigger.
+        
+        Initializes button with pull-up resistor and monitors for 3-second press.
+        When detected, sets calibration_in_progress flag and calibration_event,
+        then notifies display thread.
+        
+        Button Configuration:
+            - GPIO pin with pull-up resistor (button to GND)
+            - 0.1 second debounce time
+            - Requires 3.0 second continuous press
+        
+        Note:
+            Returns immediately if GPIO library not available.
+        """
         if not HAS_GPIO:
             print("GPIO library not available - calibration button disabled")
             return
@@ -546,13 +704,43 @@ class CalibrationButtonMonitor(threading.Thread):
 
 
 class PlotGenerator(threading.Thread):
-    """Thread to generate plots every 15 minutes"""
+    """Thread to generate plots every 15 minutes.
+    
+    Runs in background to periodically create SVG and PNG plots from
+    accumulated measurements. Updates display thread when new plots are ready.
+    
+    Attributes:
+        display_thread: Reference to EInkDisplay thread for plot update notifications
+    
+    Timing:
+        - Initial delay: 5 seconds after startup
+        - Interval: 15 minutes (PLOT_UPDATE_INTERVAL)
+        - First plot appears ~15 minutes after application start
+    
+    Behavior:
+        - Calls generate_plot() to create both SVG and PNG files
+        - Notifies display thread via display_condition to refresh plot
+        - Continues until shutdown_event is set
+    
+    Note:
+        Users should wait ~15 minutes after startup for first plot to appear.
+    """
     
     def __init__(self, display_thread, daemon=None):
         super().__init__(daemon=daemon)
         self.display_thread = display_thread
     
     def run(self):
+        """Main loop generating plots at regular intervals.
+        
+        Waits 5 seconds after startup, generates first plot, then continues
+        generating plots every PLOT_UPDATE_INTERVAL (15 minutes). Notifies
+        display thread after each plot generation.
+        
+        Note:
+            First plot appears ~15 minutes after application start (5 seconds
+            initial delay + 15 minute interval).
+        """
         # Generate initial plot
         time.sleep(5)  # Wait a bit for initial measurements
         generate_plot()
@@ -577,9 +765,41 @@ class PlotGenerator(threading.Thread):
 
 
 class CO2Sensor(threading.Thread):
-    """Thread to read CO2 sensor (real hardware or simulated)"""
+    """Thread for reading CO2, temperature, and humidity from SCD30 sensor.
+    
+    Handles sensor initialization, continuous measurements at 60-second intervals,
+    calibration events, and data storage to CSV files. Falls back to simulated
+    data if hardware is unavailable.
+    
+    Attributes:
+        display_thread: Reference to EInkDisplay thread for notifications
+        sensor: Scd30Device instance or None if hardware unavailable
+        use_hardware: Boolean flag indicating real sensor vs simulation
+        readings_to_skip: Number of initial readings to discard after
+                         startup or calibration (warmup period)
+    
+    Warmup Behavior:
+        - Skips first SENSOR_WARMUP_READINGS (2) readings after startup
+        - Skips 2 readings after calibration completion
+        - Display shows "---" during warmup instead of stale values
+    
+    Calibration:
+        - Triggered by calibration_event (from button or web interface)
+        - Stops measurements, stabilizes for 2 minutes, forces calibration
+          to CALIBRATION_REFERENCE_PPM (427 ppm), resumes measurements
+        - Requires device to be in fresh outdoor air
+    
+    Note:
+        Simulation mode generates random values if SCD30 sensor unavailable.
+    """
 
     def __init__(self, display_thread, daemon=None):
+        """Initialize CO2 sensor thread.
+        
+        Args:
+            display_thread: Reference to EInkDisplay thread for notifications
+            daemon: Whether to run as daemon thread (default None)
+        """
         super().__init__(daemon=daemon)
         self.display_thread = display_thread
         self.sensor = None
@@ -587,7 +807,22 @@ class CO2Sensor(threading.Thread):
         self.readings_to_skip = 0  # Number of initial readings to skip
         
     def init_sensor(self):
-        """Initialize SCD30 sensor hardware"""
+        """Initialize SCD30 sensor hardware.
+        
+        Connects to sensor via I2C at address 0x61, reads firmware version,
+        disables automatic self-calibration, and starts periodic measurements.
+        
+        Returns:
+            bool: True if hardware initialized successfully, False otherwise
+        
+        Side Effects:
+            - Sets self.use_hardware flag
+            - Sets self.readings_to_skip for warmup period
+            - Configures measurement interval to CO2_MEASUREMENT_INTERVAL
+        
+        Note:
+            Falls back to simulation mode on failure.
+        """
         if not HAS_SCD30_SENSOR:
             return False
             
@@ -637,7 +872,33 @@ class CO2Sensor(threading.Thread):
             return False
     
     def perform_calibration(self):
-        """Perform forced calibration of CO2 sensor"""
+        """Perform forced recalibration of the CO2 sensor.
+        
+        Exposes the sensor to fresh outdoor air and calibrates to the reference
+        CO2 level (427 ppm for year 2025). Pauses normal measurements during
+        calibration process.
+        
+        Process:
+            1. Stop current measurements
+            2. Set 2-second measurement interval for calibration
+            3. Wait 2 minutes for sensor stabilization
+            4. Execute forced calibration to CALIBRATION_REFERENCE_PPM
+            5. Restore normal measurement interval (60 seconds)
+            6. Resume measurements with 2-reading warmup period
+        
+        Requirements:
+            - Device must be placed in fresh outdoor air
+            - Process takes approximately 2 minutes
+            - User should not move device during calibration
+        
+        Side Effects:
+            - Sets sensor_warming_up flag to True
+            - Clears calibration_in_progress flag when complete
+            - Notifies display thread to update and force full redraw
+        
+        Note:
+            Thread-safe: Uses calibration_lock to update calibration status.
+        """
         global calibration_in_progress, sensor_warming_up
         
         print("Starting CO2 sensor calibration...")
@@ -702,6 +963,35 @@ class CO2Sensor(threading.Thread):
             print("Resumed normal operation")
 
     def read_co2(self):
+        """Main loop reading CO2 sensor at regular intervals.
+        
+        Initializes sensor hardware (or falls back to simulation), then
+        continuously reads measurements every CO2_MEASUREMENT_INTERVAL seconds.
+        Handles calibration events, warmup periods, data storage, and
+        notifications.
+        
+        Process:
+            1. Initialize sensor (hardware or simulation mode)
+            2. Check for calibration event (blocking)
+            3. Read measurement (real sensor or simulated data)
+            4. Skip reading if in warmup period
+            5. Append to measurements array and CSV file
+            6. Clean up old measurements from memory
+            7. Notify display thread of new data
+        
+        Warmup:
+            - Skips first SENSOR_WARMUP_READINGS after startup/calibration
+            - Sets sensor_warming_up flag until first valid reading
+        
+        Simulation Mode:
+            - Random CO2: 400-2000 ppm
+            - Random temperature: 18-26°C
+            - Random humidity: 30-70%
+            - Variable delay: 50-150% of interval
+        
+        Note:
+            Thread-safe: Uses measurement_lock and calibration_lock.
+        """
         global sensor_warming_up
         
         # Try to initialize hardware sensor
@@ -770,13 +1060,61 @@ class CO2Sensor(threading.Thread):
                 time.sleep(5)  # Wait before retry
 
     def run(self):
+        """Thread entry point - delegates to read_co2 method."""
         self.read_co2()
 
 
 class EInkDisplay(threading.Thread):
-    """Thread to update the e-ink display with current time"""
+    """Thread to update the e-ink display with current measurements and plots.
+    
+    Manages a Waveshare 2.13" e-Paper V4 display (250x122 pixels) showing:
+        - 12-hour CO2 trend plot (245x70 pixels) at top
+        - Current CO2 value in large digits
+        - Current time and date
+        - Calibration status message when applicable
+    
+    Attributes:
+        epd: Waveshare e-Paper display driver instance
+        font12, font15, font24, font36: TrueType font objects
+        base_image: PIL Image object for partial update base
+        display_condition: Threading condition for synchronized updates
+        new_measurement: Flag indicating new sensor reading available
+        new_plot: Flag indicating new plot image available
+        force_redraw: Flag to force complete display refresh
+    
+    Update Triggers:
+        - Every minute (time/date change)
+        - New CO2 measurement received
+        - New plot generated (every 15 minutes)
+        - Calibration status change
+    
+    Display Layout:
+        - Top (0-70px): CO2 trend graph
+        - Bottom left: Large CO2 value with "x10^-6 CO2" units
+        - Bottom right: Time (HH:MM) and date (DD.MM.YYYY)
+    
+    Configuration:
+        - DISPLAY_UPSIDE_DOWN: Set True to rotate display 180°
+    
+    Note:
+        Falls back to console printing if display hardware unavailable.
+        Uses partial updates for better performance and longer display life.
+    """
 
     def __init__(self, daemon=None):
+        """Initialize e-ink display thread.
+        
+        Args:
+            daemon: Whether to run as daemon thread (default None)
+        
+        Attributes initialized:
+            epd: Display driver instance (None until init_display)
+            font12-36: TrueType font objects for different sizes
+            display_condition: Threading condition for synchronized updates
+            new_measurement: Flag for new sensor reading
+            new_plot: Flag for new plot available
+            force_redraw: Flag to force complete display refresh
+        """
         super().__init__(daemon=daemon)
         self.epd = None
         self.font12 = None  # For superscript
@@ -792,7 +1130,26 @@ class EInkDisplay(threading.Thread):
         self.force_redraw = False
 
     def init_display(self):
-        """Initialize the e-ink display or set up simulation"""
+        """Initialize the e-ink display hardware and fonts.
+        
+        Sets up Waveshare e-Paper display, loads TrueType fonts, creates base
+        image for partial updates, and draws static elements (units text).
+        
+        Returns:
+            bool: True if initialization successful or simulation mode active
+        
+        Static Elements:
+            - "x10^-6" superscript notation for CO2 units
+            - "CO2" label with subscript "2"
+        
+        Font:
+            - DejaVuSansMono-Bold from fonts/ directory
+            - Sizes: 12pt (superscripts), 15pt (labels), 24pt, 36pt (CO2 value)
+        
+        Note:
+            Uses fast initialization mode for better update performance.
+            Clears display to white before first use.
+        """
         if not HAS_EINK_DISPLAY:
             print("Display: Running in simulation mode")
             return True
@@ -845,6 +1202,33 @@ class EInkDisplay(threading.Thread):
             return False
 
     def run(self):
+        """Main display update loop.
+        
+        Continuously updates e-ink display with current measurements, time,
+        date, and plots. Handles calibration messages, warmup states, and
+        efficient partial updates.
+        
+        Update Triggers:
+            - Every minute (time change)
+            - New measurement received (via display_condition)
+            - New plot generated (via display_condition)
+            - Calibration status change
+            - Force redraw flag set
+        
+        Display States:
+            - Calibration: Shows "Recalibration..." message
+            - Warmup: Shows "---" instead of CO2 value
+            - Normal: Shows CO2 value, time, date, and plot
+        
+        Performance:
+            - Uses partial updates to minimize e-ink refresh wear
+            - Only updates changed display areas
+            - Waits efficiently using condition variable
+        
+        Note:
+            Falls back to console printing if display hardware unavailable.
+            Display contents preserved on shutdown (no clear).
+        """
         if not self.init_display() and HAS_EINK_DISPLAY:
             return
 
@@ -990,15 +1374,70 @@ class EInkDisplay(threading.Thread):
 
 
 class WebServer(threading.Thread):
-    """Thread to serve a simple web interface"""
+    """Thread to serve web interface on port 8080.
+    
+    Provides HTTP server with multiple endpoints for monitoring and control:
+        - GET /: Main dashboard with current readings and 12-hour plot
+        - GET /plot.svg: Current plot SVG image
+        - GET /history: Historical data page with date range selection
+        - GET /history_plot.svg: Historical plot SVG image
+        - GET /calibrate: Trigger sensor calibration
+    
+    Attributes:
+        port: HTTP port number (default 8080)
+        server: HTTPServer instance
+        display_thread: Reference to EInkDisplay for calibration notifications
+    
+    Main Page Features:
+        - Auto-refresh every 10 seconds
+        - Live measurement table (most recent first)
+        - Interactive SVG plot with grid and auto-scaled axes
+        - Calibration button with progress banner
+        - "History" button to access historical data
+    
+    History Page Features:
+        - Date/time range pickers
+        - Quick select buttons (Yesterday, Last 24h, 48h, 7d, 30d)
+        - Dynamic plot generation for selected range
+        - Displays available data range
+    
+    Network Access:
+        - Via IP: http://[device-ip]:8080
+        - Via mDNS: http://[hostname].local:8080
+    
+    Note:
+        Uses HTML templates: co2minimeter_webpage.html and
+        co2minimeter_history.html with {{PLACEHOLDER}} substitution.
+    """
 
     def __init__(self, port, display_thread):
+        """Initialize web server thread.
+        
+        Args:
+            port: HTTP port number (default 8080)
+            display_thread: Reference to EInkDisplay for calibration notifications
+        """
         super().__init__()
         self.port = port
         self.server = None
         self.display_thread = display_thread
 
     def run(self):
+        """Start HTTP server and handle requests.
+        
+        Creates HTTPServer instance with custom RequestHandler and serves
+        forever until stop() is called.
+        
+        Routes:
+            GET /: Main dashboard page
+            GET /plot.svg: Current 12-hour plot
+            GET /history: Historical data page with date pickers
+            GET /history_plot.svg: Historical plot for selected range
+            GET /calibrate: Trigger calibration (redirects to /)
+        
+        Note:
+            Blocks until server.shutdown() called from stop() method.
+        """
         class RequestHandler(BaseHTTPRequestHandler):
             def do_GET(_self):
                 global calibration_in_progress, sensor_warming_up
@@ -1163,12 +1602,43 @@ class WebServer(threading.Thread):
         self.server.serve_forever()
 
     def stop(self):
+        """Gracefully stop the web server.
+        
+        Shuts down HTTP server and closes all connections.
+        Called during application shutdown.
+        """
         if self.server:
             self.server.shutdown()
             self.server.server_close()
 
 
 def main():
+    """Main entry point for CO2 Minimeter application.
+    
+    Initializes all threads, loads recent measurements from CSV files,
+    and starts the multi-threaded monitoring system.
+    
+    Threads Started:
+        1. CO2Sensor: Reads sensor every 60 seconds
+        2. EInkDisplay: Updates display on changes
+        3. WebServer: Serves web interface on port 8080
+        4. PlotGenerator: Creates plots every 15 minutes
+        5. CalibrationButtonMonitor: Watches GPIO button
+    
+    Startup Sequence:
+        1. Load last 12 hours of measurements from CSV
+        2. Create and start all threads
+        3. Enter main loop (Ctrl+C to exit)
+    
+    Shutdown:
+        - Ctrl+C triggers graceful shutdown
+        - Sets shutdown_event to signal all threads
+        - Waits for threads to finish (2-second timeout)
+        - Preserves e-ink display contents (no clear)
+    
+    Note:
+        Main thread stays alive to keep daemon threads running.
+    """
     print("Starting CO2 Monitor...")
     
     # Load recent measurements from CSV files
