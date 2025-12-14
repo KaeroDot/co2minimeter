@@ -103,6 +103,12 @@ The device consists of the following hardware components:
   - Shows calibration progress with warning banner
   - Requires 2-minute stabilization period during calibration
 
+Next image shows the main webpage interface:
+![Main webpage image](photos_and_plot_example_images/main_page.png)
+
+Next image shows the history webpage interface:
+![History webpage image](photos_and_plot_example_images/history_page.png)
+
 ### 4.4. Sensor Calibration
 
 The SCD30 sensor can be calibrated to maintain accuracy over time:
