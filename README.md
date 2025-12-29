@@ -62,6 +62,7 @@ The device consists of the following hardware components:
   - Shows current CO<sub>2</sub> level in large digits
   - Displays current date and time
   - Shows a 12-hour trend graph (245×70 pixels) updated every 15 minutes
+  - Graph Y-axis fixed range: 400 to 2000 ppm (configurable via `EINK_CO2_MAX_PPM` constant)
   - Configurable display orientation (normal or upside down)
   - **Note**: After startup, wait ~15 minutes for the first plot to be generated
 
@@ -158,6 +159,7 @@ Key configuration constants (defined in `co2minimeter.py`):
 - `CALIBRATION_BUTTON_PIN = 21` - GPIO pin for calibration button (pin 40)
 - `CALIBRATION_REFERENCE_PPM = 427` - Reference CO<sub>2</sub> level for calibration
 - `DISPLAY_UPSIDE_DOWN = False` - Set to `True` to rotate e-ink display 180°
+- `EINK_CO2_MAX_PPM = 2000` - Maximum CO<sub>2</sub> value for e-ink display plot Y-axis (can be increased up to 50000 for high CO<sub>2</sub> environments)
 
 ## 5. Installation
 

@@ -107,6 +107,7 @@ FONT_DIR = os.path.join(os.path.dirname(os.path.realpath(__file__)), "fonts")
 CALIBRATION_BUTTON_PIN = 21  # GPIO 21 (physical pin 40)
 CALIBRATION_REFERENCE_PPM = 427  # Reference CO2 level for forced calibration
 DISPLAY_UPSIDE_DOWN = True  # Set to True to rotate display 180 degrees
+EINK_CO2_MAX_PPM = 2000  # Maximum CO2 value for e-ink display plot axis
 
 # Global variables
 measurements = []
@@ -256,12 +257,13 @@ def generate_plot():
         - data_latest_plot.svg (1000x300px): Full-featured plot with grid,
           all three parameters (CO2, temperature, humidity), auto-scaled axes
         - data_latest_plot.png (245x70px): Simplified plot for e-ink display,
-          CO2 only, black and white
+          CO2 only, black and white, fixed axis 400-EINK_CO2_MAX_PPM
     
     Features:
         - Gap detection: Inserts NaN values for gaps > 5 minutes
-        - Auto-scaled CO2 axis: 400 ppm minimum, rounded to nearest 500
-        - Three separate y-axes for different parameters
+        - Auto-scaled CO2 axis (SVG): 400 ppm minimum, rounded to nearest 500
+        - Fixed CO2 axis (PNG): 400 to EINK_CO2_MAX_PPM for e-ink display
+        - Three separate y-axes for different parameters (SVG only)
         - Hourly time markers on x-axis
     
     Note:
@@ -356,9 +358,38 @@ def generate_plot():
         # Generate PNG without grid (245x70 pixels for e-ink display)
         fig_png, ax_png = plt.subplots(figsize=(2.45, 0.7), dpi=100)
         ax_png.plot(timestamps_gapped, values_gapped, color="#000000", linewidth=1)
-        ax_png.set_ylim(400, 2000)
-        ax_png.set_yticks([500, 1000, 1500])
-        ax_png.set_yticklabels(['0.5k', '1k', '1.5k'])
+        ax_png.set_ylim(400, EINK_CO2_MAX_PPM)
+        # Calculate yticks: round to 500, 1000, 2000, 5000, or 10000 to show max 4 ticks
+        range_span = EINK_CO2_MAX_PPM - 400
+        # Determine appropriate tick interval (500, 1000, 2000, 5000, 10000, 20000)
+        if range_span <= 2000:  # e.g., max=2000: use 500 interval
+            tick_interval = 500
+        elif range_span <= 4000:  # e.g., max=4000: use 1000 interval
+            tick_interval = 1000
+        elif range_span <= 8000:  # e.g., max=8000: use 2000 interval
+            tick_interval = 2000
+        elif range_span <= 20000:  # e.g., max=20000: use 5000 interval
+            tick_interval = 5000
+        elif range_span <= 40000:  # e.g., max=40000: use 10000 interval
+            tick_interval = 10000
+        else:  # e.g., max=50000: use 20000 interval
+            tick_interval = 20000
+        # Generate ticks starting from first multiple of tick_interval above 400
+        first_tick = ((400 // tick_interval) + 1) * tick_interval
+        yticks = list(range(first_tick, EINK_CO2_MAX_PPM, tick_interval))
+        # Format labels: "0.5 k", "1 k", "6 k", "10 k", etc.
+        yticklabels = []
+        for tick in yticks:
+            if tick >= 1000:
+                tick_k = tick / 1000
+                if tick_k == int(tick_k):
+                    yticklabels.append(f'{int(tick_k)} k')
+                else:
+                    yticklabels.append(f'{tick_k:.1f} k')
+            else:
+                yticklabels.append(str(tick))
+        ax_png.set_yticks(yticks)
+        ax_png.set_yticklabels(yticklabels)
         ax_png.tick_params(axis='y', labelsize=6)
         ax_png.set_xlim(start_time, now)
         ax_png.xaxis.set_major_locator(mdates.HourLocator(interval=1))
