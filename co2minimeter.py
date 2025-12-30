@@ -25,6 +25,22 @@ Author: Developed by Claude Sonnet 4.5 AI
 License: MIT
 """
 
+# ============================================================================
+# Configuration Constants
+# ============================================================================
+CO2_MEASUREMENT_INTERVAL = 60  # Measurement interval in seconds
+SENSOR_WARMUP_READINGS = 2  # Number of initial sensor readings to skip
+PLOT_UPDATE_INTERVAL = 900  # Plot update interval in seconds (15 minutes)
+WEB_SERVER_PORT = 8080
+HOURS_TO_KEEP = 12  # Keep last 12 hours of measurements
+CALIBRATION_BUTTON_PIN = 21  # GPIO 21 (physical pin 40)
+CALIBRATION_REFERENCE_PPM = 427  # Reference CO2 level for forced calibration
+DISPLAY_UPSIDE_DOWN = True  # Set to True to rotate display 180 degrees
+EINK_CO2_MAX_PPM = 2000  # Maximum CO2 value for e-ink display plot axis
+
+# ============================================================================
+# Imports
+# ============================================================================
 import sys
 import os
 import time
@@ -96,20 +112,11 @@ else:
         "E-ink display library not found. Running in simulation mode (display updates will be printed to console)"
     )
 
-# Configuration
-CO2_MEASUREMENT_INTERVAL = 60  # Measurement interval in seconds
-SENSOR_WARMUP_READINGS = 2  # Number of initial sensor readings to skip
-PLOT_UPDATE_INTERVAL = 900  # Plot update interval in seconds (15 minutes)
-WEB_SERVER_PORT = 8080
-HOURS_TO_KEEP = 12  # Keep last 12 hours of measurements
-DATA_DIR = os.path.join(os.path.dirname(os.path.realpath(__file__)), "data")
-FONT_DIR = os.path.join(os.path.dirname(os.path.realpath(__file__)), "fonts")
-CALIBRATION_BUTTON_PIN = 21  # GPIO 21 (physical pin 40)
-CALIBRATION_REFERENCE_PPM = 427  # Reference CO2 level for forced calibration
-DISPLAY_UPSIDE_DOWN = True  # Set to True to rotate display 180 degrees
-EINK_CO2_MAX_PPM = 2000  # Maximum CO2 value for e-ink display plot axis
-
-# Global variables
+# ============================================================================
+# Global Variables
+# ============================================================================
+data_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "data")
+font_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "fonts")
 measurements = []
 measurement_lock = threading.Lock()
 shutdown_event = threading.Event()
@@ -118,6 +125,9 @@ calibration_in_progress = False
 calibration_lock = threading.Lock()
 sensor_warming_up = True  # True during warmup period (startup or after calibration)
 
+# ============================================================================
+# Functions
+# ============================================================================
 
 def save_to_csv(timestamp_str, co2_value, temperature, humidity):
     """Save measurement to daily CSV file.
@@ -137,7 +147,7 @@ def save_to_csv(timestamp_str, co2_value, temperature, humidity):
     """
     try:
         # Create data directory if it doesn't exist
-        os.makedirs(DATA_DIR, exist_ok=True)
+        os.makedirs(data_dir, exist_ok=True)
         
         # Parse timestamp to get date
         dt = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
@@ -145,7 +155,7 @@ def save_to_csv(timestamp_str, co2_value, temperature, humidity):
         
         # Create filename: data_YYYY-MM-DD.csv
         filename = f"data_{date_str}.csv"
-        filepath = os.path.join(DATA_DIR, filename)
+        filepath = os.path.join(data_dir, filename)
         
         # Check if file exists to determine if we need to write header
         file_exists = os.path.isfile(filepath)
@@ -177,7 +187,7 @@ def load_recent_measurements():
     loaded_measurements = []
     
     try:
-        if not os.path.exists(DATA_DIR):
+        if not os.path.exists(data_dir):
             print("No previous data found.")
             return loaded_measurements
         
@@ -189,7 +199,7 @@ def load_recent_measurements():
         for days_back in range(2):  # Check today and yesterday
             date = datetime.now() - timedelta(days=days_back)
             filename = f"data_{date.strftime('%Y-%m-%d')}.csv"
-            filepath = os.path.join(DATA_DIR, filename)
+            filepath = os.path.join(data_dir, filename)
             if os.path.isfile(filepath):
                 files_to_check.append(filepath)
         
@@ -350,7 +360,7 @@ def generate_plot():
         
         plt.tight_layout()
         
-        svg_path = os.path.join(DATA_DIR, "data_latest_plot.svg")
+        svg_path = os.path.join(data_dir, "data_latest_plot.svg")
         plt.savefig(svg_path, format='svg', dpi=100)
         print(f"Plot saved as SVG: {svg_path}")
         plt.close(fig_svg)
@@ -400,7 +410,7 @@ def generate_plot():
         ax_png.set_ylabel('')
         plt.subplots_adjust(left=0.12, right=0.98, top=0.98, bottom=0.08)
         
-        png_path = os.path.join(DATA_DIR, "data_latest_plot.png")
+        png_path = os.path.join(data_dir, "data_latest_plot.png")
         plt.savefig(png_path, format='png', dpi=100)
         print(f"Plot saved as PNG: {png_path}")
         plt.close(fig_png)
@@ -429,7 +439,7 @@ def load_historical_data(start_time, end_time):
     historical_data = []
     
     try:
-        if not os.path.exists(DATA_DIR):
+        if not os.path.exists(data_dir):
             return historical_data
         
         # Get all CSV files in the date range
@@ -438,7 +448,7 @@ def load_historical_data(start_time, end_time):
         
         while current_date <= end_date:
             filename = f"data_{current_date.strftime('%Y-%m-%d')}.csv"
-            filepath = os.path.join(DATA_DIR, filename)
+            filepath = os.path.join(data_dir, filename)
             
             if os.path.isfile(filepath):
                 try:
@@ -482,10 +492,10 @@ def get_data_range():
         Used by history page to display available data range.
     """
     try:
-        if not os.path.exists(DATA_DIR):
+        if not os.path.exists(data_dir):
             return None, None
         
-        csv_files = sorted([f for f in os.listdir(DATA_DIR) if f.startswith('data_') and f.endswith('.csv')])
+        csv_files = sorted([f for f in os.listdir(data_dir) if f.startswith('data_') and f.endswith('.csv')])
         
         if not csv_files:
             return None, None
@@ -504,7 +514,7 @@ def get_data_range():
         
         # Read first timestamp from first file
         try:
-            with open(os.path.join(DATA_DIR, first_file), 'r') as f:
+            with open(os.path.join(data_dir, first_file), 'r') as f:
                 reader = csv.reader(f)
                 next(reader, None)  # Skip header
                 first_row = next(reader, None)
@@ -515,7 +525,7 @@ def get_data_range():
         
         # Read last timestamp from last file
         try:
-            with open(os.path.join(DATA_DIR, last_file), 'r') as f:
+            with open(os.path.join(data_dir, last_file), 'r') as f:
                 reader = csv.reader(f)
                 next(reader, None)  # Skip header
                 rows = list(reader)
@@ -636,7 +646,7 @@ def generate_history_plot(start_time, end_time):
         
         plt.tight_layout()
         
-        svg_path = os.path.join(DATA_DIR, "history_plot.svg")
+        svg_path = os.path.join(data_dir, "history_plot.svg")
         plt.savefig(svg_path, format='svg', dpi=100)
         print(f"History plot saved: {svg_path}")
         plt.close(fig_svg)
@@ -1195,7 +1205,7 @@ class EInkDisplay(threading.Thread):
             # self.font15 = ImageFont.truetype(os.path.join(picdir, "Font.ttc"), 15)
             # self.font24 = ImageFont.truetype(os.path.join(picdir, "Font.ttc"), 24)
             # self.font36 = ImageFont.truetype(os.path.join(picdir, "Font.ttc"), 36)
-            font_path = os.path.join(FONT_DIR, "DejaVuSansMono-Bold.ttf")
+            font_path = os.path.join(font_dir, "DejaVuSansMono-Bold.ttf")
             self.font12 = ImageFont.truetype(font_path, 12)
             self.font15 = ImageFont.truetype(font_path, 15)
             self.font24 = ImageFont.truetype(font_path, 24)
@@ -1319,7 +1329,7 @@ class EInkDisplay(threading.Thread):
                     if HAS_EINK_DISPLAY and self.epd:
                         # Check if we need to update the plot based on notification
                         if self.new_plot:
-                            png_path = os.path.join(DATA_DIR, "data_latest_plot.png")
+                            png_path = os.path.join(data_dir, "data_latest_plot.png")
                             if os.path.exists(png_path):
                                 try:
                                     # Load the plot image
@@ -1480,7 +1490,7 @@ class WebServer(threading.Thread):
                 
                 # Serve SVG plot file
                 if path == '/plot.svg':
-                    svg_path = os.path.join(DATA_DIR, "data_latest_plot.svg")
+                    svg_path = os.path.join(data_dir, "data_latest_plot.svg")
                     if os.path.exists(svg_path):
                         _self.send_response(200)
                         _self.send_header("Content-type", "image/svg+xml")
@@ -1494,7 +1504,7 @@ class WebServer(threading.Thread):
                 
                 # Serve history plot SVG
                 if path == '/history_plot.svg':
-                    svg_path = os.path.join(DATA_DIR, "history_plot.svg")
+                    svg_path = os.path.join(data_dir, "history_plot.svg")
                     if os.path.exists(svg_path):
                         _self.send_response(200)
                         _self.send_header("Content-type", "image/svg+xml")
